@@ -459,20 +459,23 @@ def parse_thesaurus(docx_path: Path) -> dict:
 def run_tests(data: dict):
     errors = []
 
+    def _norm(s: str) -> str:
+        return " ".join(s.split()).casefold()
+
     def find_entry(theme_name: str, headword: str) -> dict | None:
         for part in data["parts"]:
             for theme in part["themes"]:
-                if theme_name.upper() in theme["name"].upper():
+                if _norm(theme["name"]) == _norm(theme_name):
                     for sub in theme["subsections"]:
                         for entry in sub["entries"]:
-                            if entry["headword"].lower().startswith(headword.lower()):
+                            if _norm(entry["headword"]) == _norm(headword):
                                 return entry
         return None
 
     def find_theme(theme_name: str) -> dict | None:
         for part in data["parts"]:
             for theme in part["themes"]:
-                if theme["name"].upper() == theme_name.upper():
+                if _norm(theme["name"]) == _norm(theme_name):
                     return theme
         return None
 
@@ -708,6 +711,12 @@ def main():
     print("\nRunning tests ...")
     errors = run_tests(data)
 
+    if errors:
+        print("\nTest failures:")
+        for e in errors:
+            print("  " + e)
+        sys.exit(1)
+
     out_path = Path("thesaurus.json")
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -715,14 +724,7 @@ def main():
 
     print()
     summarize(data)
-
-    if errors:
-        print("\nTest failures:")
-        for e in errors:
-            print("  " + e)
-        sys.exit(1)
-    else:
-        print("\nAll tests passed.")
+    print("\nAll tests passed.")
 
 
 if __name__ == "__main__":
