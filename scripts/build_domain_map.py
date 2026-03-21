@@ -45,7 +45,6 @@ POS_TOPS: dict[str, str] = {
     "n": "N_TOP",
     "v": "V_TOP",
     "a": "A_TOP",
-    "s": "A_TOP",   # satellite adj → same root as adj
     "r": "R_TOP",
 }
 
@@ -138,7 +137,7 @@ def main() -> None:
         for sid, rec in synset_counts.items():
             ss = get_synset(sid)
             if ss is not None:
-                by_pos[ss.pos].append((ss, rec["count"], rec["definition"]))
+                by_pos["a" if ss.pos == "s" else ss.pos].append((ss, rec["count"], rec["definition"]))
 
         if not by_pos:
             continue
