@@ -182,6 +182,68 @@ class EmbeddingScorer:
         return _cosine(self._embed(synset_text), self._embed(meaning))
 
 
+class SimCSEScorer:
+    """Cosine similarity via a sentence-transformers SimCSE model.
+
+    Uses the same on-disk cache format as EmbeddingScorer so the two can
+    share a cache file without collision (keyed by model name).
+
+    Default model: princeton-nlp/sup-simcse-roberta-large
+    Lighter option: princeton-nlp/sup-simcse-bert-base-uncased
+    """
+
+    def __init__(
+        self,
+        model: str = "princeton-nlp/sup-simcse-roberta-large",
+        cache_path: Path = Path("build/embeddings_cache.json"),
+        batch_size: int = 64,
+    ):
+        from sentence_transformers import SentenceTransformer
+        self.model_name = model
+        self.cache_path = cache_path
+        self.batch_size = batch_size
+        self._st = SentenceTransformer(model)
+        self._cache: dict[str, list[float]] = {}
+        if cache_path.exists():
+            raw = json.loads(cache_path.read_text())
+            self._cache = raw.get(model, {})
+            print(f"Loaded {len(self._cache)} cached embeddings for {model}")
+
+    def _save(self) -> None:
+        full = json.loads(self.cache_path.read_text()) if self.cache_path.exists() else {}
+        full[self.model_name] = self._cache
+        self.cache_path.write_text(json.dumps(full, separators=(",", ":")))
+
+    def precompute(self, texts: list[str]) -> None:
+        needed = [t for t in dict.fromkeys(texts) if t and t not in self._cache]
+        if not needed:
+            print("All texts already cached.")
+            return
+        print(f"Embedding {len(needed)} texts with SimCSE "
+              f"(batch_size={self.batch_size}, model={self.model_name}) ...")
+        for i in range(0, len(needed), self.batch_size):
+            batch = needed[i : i + self.batch_size]
+            vecs = self._st.encode(batch, show_progress_bar=False)
+            for text, vec in zip(batch, vecs):
+                self._cache[text] = vec.tolist()
+            self._save()
+            print(f"  {min(i + self.batch_size, len(needed))}/{len(needed)}",
+                  end="\r", flush=True)
+        print(f"\nDone. Cache now has {len(self._cache)} entries.")
+
+    def _embed(self, text: str) -> list[float]:
+        if text not in self._cache:
+            vec = self._st.encode([text], show_progress_bar=False)[0]
+            self._cache[text] = vec.tolist()
+            self._save()
+        return self._cache[text]
+
+    def __call__(self, synset_text: str, meaning: str) -> float:
+        if not synset_text or not meaning:
+            return 0.0
+        return _cosine(self._embed(synset_text), self._embed(meaning))
+
+
 def make_scorer(
     method: str,
     embedding_model: str,
@@ -192,6 +254,12 @@ def make_scorer(
         return overlap_scorer
     if method == "embeddings":
         return EmbeddingScorer(
+            model=embedding_model,
+            cache_path=cache_path,
+            batch_size=batch_size,
+        )
+    if method == "simcse":
+        return SimCSEScorer(
             model=embedding_model,
             cache_path=cache_path,
             batch_size=batch_size,
@@ -455,10 +523,12 @@ def main() -> None:
         description="Match thesaurus entries to WordNet senses"
     )
     parser.add_argument("--headword",        help="Only process this headword (demo mode)")
-    parser.add_argument("--method",          choices=["overlap", "embeddings"],
+    parser.add_argument("--method",          choices=["overlap", "embeddings", "simcse"],
                         default="overlap",   help="Definition similarity method (default: overlap)")
-    parser.add_argument("--embedding-model", default="embeddinggemma:latest",
-                        help="Ollama model for embeddings")
+    parser.add_argument("--embedding-model", default=None,
+                        help="Model name for embeddings/simcse "
+                             "(default: embeddinggemma:latest for embeddings, "
+                             "princeton-nlp/sup-simcse-roberta-large for simcse)")
     parser.add_argument("--batch-size",      type=int, default=64,
                         help="Texts per Ollama embed call (default: 64)")
     parser.add_argument("--cache",           default="build/embeddings_cache.json",
@@ -473,6 +543,13 @@ def main() -> None:
     parser.add_argument("--limit",           type=int, default=0,
                         help="Only process the first N entries (0 = all)")
     args = parser.parse_args()
+
+    # Set default embedding model per method
+    if args.embedding_model is None:
+        args.embedding_model = (
+            "princeton-nlp/sup-simcse-roberta-large" if args.method == "simcse"
+            else "embeddinggemma:latest"
+        )
 
     setup_wn()
     data = json.loads(Path(args.thesaurus).read_text())
@@ -525,7 +602,7 @@ def main() -> None:
                          Path(args.cache), args.batch_size)
 
     # Batch embed if needed
-    if args.method == "embeddings":
+    if args.method in ("embeddings", "simcse"):
         scorer.precompute(all_texts)  # type: ignore[attr-defined]
 
     # Score pass — enrich a deep copy of the thesaurus
