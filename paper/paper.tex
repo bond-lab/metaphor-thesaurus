@@ -190,15 +190,20 @@ used (e.g.\ \textsc{bright colour} vs.\ \emph{a light shade of blue}).
 
 \paragraph{Embedding cosine similarity.}
 To capture semantic equivalence beyond surface overlap we encode both
-strings with \texttt{embeddinggemma} (a 768-dimensional encoder served
-locally via Ollama) and compute cosine similarity:
+strings and compute cosine similarity:
 \begin{equation}
   \mathrm{sim}_{\mathrm{emb}}(q, d_s)
     = \frac{\mathbf{e}_q \cdot \mathbf{e}_s}
            {\|\mathbf{e}_q\|\,\|\mathbf{e}_s\|},
 \end{equation}
-where $\mathbf{e}_q$ and $\mathbf{e}_s$ are the respective embedding
-vectors.
+where $\mathbf{e}_q$ and $\mathbf{e}_s$ are the respective embedding vectors.
+We support two encoders: \texttt{embeddinggemma} (768-dimensional, served
+locally via Ollama) and \texttt{sup-simcse-roberta-large}~\cite{gao2021simcse}
+(1024-dimensional, loaded via \texttt{sentence-transformers}), referred to as
+SimCSE.
+SimCSE is trained with supervised contrastive learning on natural language
+inference data, making its representations sensitive to fine-grained meaning
+differences — an advantage for distinguishing near-synonymous WordNet senses.
 
 \paragraph{Batch encoding.}
 All unique strings to be encoded (synset texts, literal meanings, and
@@ -284,6 +289,41 @@ When such a relationship holds, the more specific domain is promoted under
 the broader one (e.g.\ \textsc{waterbird} $\to$ \textsc{bird}).
 Of the 213 source domains with hypernym matches, 92 had their parent
 updated in this way, producing a coherent shallow ontology of source domains.
+
+\paragraph{Target domain map.}
+We apply the same procedure to the metaphorical role, collecting hypernym-match
+evidence from \texttt{wn\_metaphorical} scores to build a parallel
+\emph{target} domain map.
+The target map yields 128 domains (186 synset-bearing entries, 21 grouping nodes,
+74 ancestry promotions), substantially fewer than the source map because
+target domains in the thesaurus are drawn from a smaller lexical range
+(abstract concepts such as \textsc{love}, \textsc{time}, \textsc{society}).
+
+\paragraph{Combined domain map.}
+We also produce a \emph{combined} map by summing evidence across both roles
+before applying the frequency threshold.
+This gives 325 domains (595 synset-bearing entries, 75 grouping nodes,
+218 ancestry promotions) and is the most comprehensive taxonomy of the
+concepts covered by the thesaurus.
+
+\paragraph{Source vs target synset divergence.}
+Of the 213 source and 128 target domains, only 16 names appear in both maps.
+Of these, 4 have identical canonical synsets in both roles
+(\textsc{animal}, \textsc{building}, \textsc{human}, \textsc{money}),
+while 12 diverge.
+The divergences reveal genuine polysemy: the same domain word attracts
+different senses depending on whether it anchors a literal or a metaphorical
+meaning.
+For example, \textsc{food} maps to \textit{``any substance that can be metabolized''}
+as a source domain but to \textit{``a substance that can be used or prepared as food''}
+as a target domain; \textsc{race} maps to \textit{``a contest of speed''} (source)
+versus \textit{``people who are believed to belong to a race''} (target);
+and \textsc{plant} resolves to a biological cell unit (source) versus a woody
+plant (target).
+This pattern — source roles attracting the more general/process sense and
+target roles attracting the more prototypical/object sense — is consistent with
+the structure of conceptual metaphor, where abstract targets are understood
+through concrete, well-delineated source concepts.
 
 \subsection{Combined Score and Sense Selection}
 \label{subsec:combined}

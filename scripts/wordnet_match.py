@@ -198,11 +198,15 @@ class SimCSEScorer:
         cache_path: Path = Path("build/embeddings_cache.json"),
         batch_size: int = 64,
     ):
+        import torch
         from sentence_transformers import SentenceTransformer
         self.model_name = model
         self.cache_path = cache_path
         self.batch_size = batch_size
-        self._st = SentenceTransformer(model)
+        device = "mps" if torch.backends.mps.is_available() else \
+                 "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"SimCSE device: {device}")
+        self._st = SentenceTransformer(model, device=device)
         self._cache: dict[str, list[float]] = {}
         if cache_path.exists():
             raw = json.loads(cache_path.read_text())
