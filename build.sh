@@ -5,6 +5,9 @@
 #   ./build.sh                 full run (embeddings, all entries)
 #   ./build.sh --overlap       use Jaccard overlap instead of embeddings
 #   ./build.sh --limit 50      smoke-test: first N entries, writes to build/thesaurus_wn_test.json
+#
+# THE_THESAURUS.docx is downloaded automatically from the John Benjamins website
+# if not already present. It is not redistributable and is excluded from git.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -29,6 +32,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 mkdir -p "$BUILD"
+
+# ── 0a. Thesaurus DOCX ────────────────────────────────────────────────────
+THESAURUS_URL="https://www.benjamins.com/series/hcp/78/THE_THESAURUS.docx"
+echo "=== Step 0a: thesaurus source ==="
+if [[ ! -f "$THESAURUS_DOCX" ]]; then
+    echo "Downloading $THESAURUS_DOCX ..."
+    curl -fL "$THESAURUS_URL" -o "$THESAURUS_DOCX"
+else
+    echo "  $THESAURUS_DOCX already present"
+fi
 
 # ── 0. Python environment ──────────────────────────────────────────────────
 echo "=== Step 0: python environment ==="

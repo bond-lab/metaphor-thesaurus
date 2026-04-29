@@ -33,7 +33,6 @@ import copy
 import json
 import math
 import re
-import sys
 from pathlib import Path
 from typing import Callable
 
@@ -51,7 +50,7 @@ OMW_EN_SPECIFIER = "omw-en:2.0"
 def setup_wn() -> None:
     """Point wn at the local build directory and download if needed."""
     BUILD_WN_DATA.mkdir(parents=True, exist_ok=True)
-    wn.config.data_home = str(BUILD_WN_DATA)
+    wn.config.data_directory = BUILD_WN_DATA
 
     existing = {lx.specifier() for lx in wn.lexicons()}
     for spec in (OMW_EN_SPECIFIER,):

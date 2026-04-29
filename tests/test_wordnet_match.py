@@ -19,7 +19,10 @@ from wordnet_match import (
     hypernym_matches,
     match_entry,
     overlap_scorer,
+    setup_wn,
 )
+
+setup_wn()  # must run before any wn calls to redirect to build/wn-data
 
 THESAURUS = Path(__file__).parent.parent / "build" / "thesaurus.json"
 

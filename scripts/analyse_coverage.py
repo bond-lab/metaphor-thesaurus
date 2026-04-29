@@ -232,9 +232,9 @@ def main() -> None:
           f"{pct(totals['lemma'], has_wn)}  {pct(totals['exact'], has_wn)}  "
           f"{lvl_cols}  {pct(missed, has_wn)}")
 
-    print(f"\nColumns: N=entries in domain theme  no_wn=no WN sense found  "
-          f"lemma=current pipeline  exact=hyponym of domain synset  "
-          f"+Nlv=additional match N WN levels up  miss=unmatched at all levels")
+    print("\nColumns: N=entries in domain theme  no_wn=no WN sense found  "
+          "lemma=current pipeline  exact=hyponym of domain synset  "
+          "+Nlv=additional match N WN levels up  miss=unmatched at all levels")
 
 
 if __name__ == "__main__":

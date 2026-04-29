@@ -154,8 +154,6 @@ def main() -> None:
 
             first_domain = True
             for pos, group in pos_groups.items():
-                grp_total = group["total_count"]
-                grp_pct   = 100 * grp_total / total if total else 0
                 grp_synsets = sorted(group["synsets"], key=lambda x: x[1], reverse=True)
                 grp_synsets = [(ss, cnt) for ss, cnt in grp_synsets
                                if cnt >= args.min_count]
