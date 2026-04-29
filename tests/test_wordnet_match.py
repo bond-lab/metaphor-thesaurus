@@ -1,15 +1,11 @@
-"""
-Tests for scripts/wordnet_match.py
-
-Run from the repo root:
-  .venv/bin/python tests/test_wordnet_match.py
-"""
+"""Tests for scripts/wordnet_match.py"""
 
 import json
 import sys
 from pathlib import Path
 
-# Allow imports from scripts/
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 import wn
@@ -22,9 +18,20 @@ from wordnet_match import (
     setup_wn,
 )
 
-setup_wn()  # must run before any wn calls to redirect to build/wn-data
+try:
+    setup_wn()
+    _WN_AVAILABLE = True
+except Exception:
+    _WN_AVAILABLE = False
 
 THESAURUS = Path(__file__).parent.parent / "build" / "thesaurus.json"
+
+requires_wn = pytest.mark.skipif(
+    not _WN_AVAILABLE, reason="WordNet data unavailable (run setup_wn() first)"
+)
+requires_thesaurus = pytest.mark.skipif(
+    not THESAURUS.exists(), reason="build/thesaurus.json not found — run build.sh first"
+)
 
 
 def test_overlap_scorer():
@@ -35,11 +42,10 @@ def test_overlap_scorer():
     score = overlap_scorer("a precious transparent stone of blue corundum",
                            "transparent bright blue precious stone")
     assert 0.3 < score < 0.8, f"unexpected partial overlap score {score}"
-    print("PASS: overlap_scorer")
 
 
+@requires_wn
 def test_hypernym_matches_sapphire():
-    # Stone sense should reach 'mineral'
     ss_stone = next(
         ss for ss in wn.synsets("sapphire", pos="n")
         if "corundum" in (ss.definition() or "")
@@ -48,9 +54,7 @@ def test_hypernym_matches_sapphire():
     assert result["score"] == 1.0, \
         f"expected MINERAL match for sapphire stone sense, got {result}"
     assert "MINERAL" in result["matched"], "MINERAL key missing from matched"
-    print("PASS: hypernym_matches — sapphire stone → mineral")
 
-    # Colour sense should reach 'colour' but NOT 'mineral'
     ss_colour = next(
         ss for ss in wn.synsets("sapphire", pos="n")
         if "shade of blue" in (ss.definition() or "")
@@ -61,7 +65,6 @@ def test_hypernym_matches_sapphire():
         f"expected COLOUR match for sapphire colour sense, got {r_colour}"
     assert r_mineral["score"] == 0.0, \
         f"MINERAL should not match sapphire colour sense, got {r_mineral}"
-    print("PASS: hypernym_matches — sapphire colour → colour yes, mineral no")
 
 
 def test_extract_domains():
@@ -76,9 +79,9 @@ def test_extract_domains():
     targets3, sources3 = extract_domains("NO IS VERB")
     assert targets3 == ["NO"] and sources3 == ["VERB"]
 
-    print("PASS: extract_domains")
 
-
+@requires_wn
+@requires_thesaurus
 def test_end_to_end_sapphire():
     data = json.loads(THESAURUS.read_text())
     entry = next(
@@ -99,12 +102,3 @@ def test_end_to_end_sapphire():
         f"literal: wrong synset {result['literal']['synset_id']}"
     assert result["metaphorical"]["synset_id"] == "omw-en-04969242-n", \
         f"metaphorical: wrong synset {result['metaphorical']['synset_id']}"
-    print("PASS: end-to-end sapphire (overlap)")
-
-
-if __name__ == "__main__":
-    test_overlap_scorer()
-    test_hypernym_matches_sapphire()
-    test_extract_domains()
-    test_end_to_end_sapphire()
-    print("\nAll tests passed.")

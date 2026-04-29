@@ -83,7 +83,8 @@ mv -f thesaurus.json "$BUILD/thesaurus.json"
 # ── 2. Run tests ───────────────────────────────────────────────────────────
 echo ""
 echo "=== Step 2: run tests ==="
-$PYTHON tests/test_wordnet_match.py
+uv pip install pytest --quiet
+$PYTHON -m pytest tests/ -v
 
 # ── 3. WordNet matching ────────────────────────────────────────────────────
 echo ""

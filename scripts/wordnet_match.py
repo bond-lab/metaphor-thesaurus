@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["wn", "ollama"]
+# dependencies = ["wn", "ollama", "torch", "sentence-transformers"]
 # ///
 """Match thesaurus entries to WordNet senses.
 
@@ -33,6 +33,7 @@ import copy
 import json
 import math
 import re
+from collections import deque
 from pathlib import Path
 from typing import Callable
 
@@ -136,7 +137,7 @@ class EmbeddingScorer:
         self._cache: dict[str, list[float]] = {}
         if cache_path.exists():
             raw = json.loads(cache_path.read_text())
-            # Cache is keyed by "model\x00text" to isolate different models
+            # Cache file: top-level dict keyed by model name → per-model text→vector dict
             self._cache = raw.get(model, {})
             print(f"Loaded {len(self._cache)} cached embeddings for {model}")
 
@@ -324,10 +325,10 @@ def hypernym_matches(synset, domain_words: list[str], max_visited: int = 300) ->
     remaining = set(targets)
     matched: dict[str, dict] = {}
     visited: set[str] = set()
-    queue = [synset]
+    queue: deque = deque([synset])
 
     while queue and remaining:
-        ss = queue.pop(0)
+        ss = queue.popleft()
         if ss.id in visited:
             continue
         visited.add(ss.id)
@@ -336,7 +337,7 @@ def hypernym_matches(synset, domain_words: list[str], max_visited: int = 300) ->
 
         lemmas = {lem.lower().replace("_", " ") for lem in ss.lemmas()}
         for dom in list(remaining):
-            if any(dom in lem for lem in lemmas):
+            if any(dom == lem or dom in lem.split() for lem in lemmas):
                 matched[dom.upper()] = {
                     "synset_id":  ss.id,
                     "definition": ss.definition() or "",
@@ -586,7 +587,8 @@ def main() -> None:
                 for sub in theme["subsections"]:
                     for entry in sub["entries"]:
                         if "wn_literal" in entry:
-                            existing[entry["headword"]] = {
+                            norm = re.sub(r"[(\s]+$", "", entry["headword"]).strip()
+                            existing[norm] = {
                                 "wn_literal":      entry["wn_literal"],
                                 "wn_metaphorical": entry["wn_metaphorical"],
                                 "wn_n_senses":     entry["wn_n_senses"],
@@ -612,16 +614,23 @@ def main() -> None:
     enriched = copy.deepcopy(data)
     total = done = skipped = unmatched = 0
 
+    limit_reached = False
     for part in enriched["parts"]:
+        if limit_reached:
+            break
         for theme in part["themes"]:
+            if limit_reached:
+                break
             theme_name = theme["name"]
             for sub in theme["subsections"]:
+                if limit_reached:
+                    break
                 for entry in sub["entries"]:
+                    if args.limit and done + skipped >= args.limit:
+                        limit_reached = True
+                        break
                     total += 1
                     hw = re.sub(r"[(\s]+$", "", entry["headword"]).strip()
-
-                    if args.limit and done + skipped >= args.limit:
-                        continue
 
                     if hw in existing:
                         entry.update(existing[hw])

@@ -161,7 +161,8 @@ Each `wn_literal` / `wn_metaphorical` object:
         {
           "name": "QUALITY IS MONEY/WEALTH",
           "relationships": [
-            { "symbol": "#", "theme": "BAD/UNIMPORTANT IS POOR/CHEAP" }
+            { "symbol": "#", "theme": "BAD/UNIMPORTANT IS POOR/CHEAP" },
+            { "symbol": "#", "theme": "HUMAN IS VALUABLE OBJECT/COMMODITY" }
           ],
           "subsections": [
             {
