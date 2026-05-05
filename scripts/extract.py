@@ -28,21 +28,42 @@ from docx.oxml.ns import qn
 # ---------------------------------------------------------------------------
 
 RELATIONSHIP_SYMBOLS = {"<", ">", "#", ">>", "^", "v", "⇔", "⟺", "||", "↔"}
+
+# Official set from guide section 3, extended with non-standard forms Goatly
+# uses in the thesaurus proper (vt-pp, v-prp, etc.).
 WORD_CLASSES = {
+    # Official (guide section 3)
     "adj", "adjphr", "adv", "advphr", "art", "cl", "excl", "idi",
     "n", "nplur", "nphr", "pr", "pref", "prphr", "pt", "v", "verg",
     "vi", "v-inf", "virec", "vtref", "vt", "prp", "pp",
+    # Non-standard extensions found in the thesaurus source
+    "vt-pp",   # transitive verb, past-participle form
+    "v-prp",   # verb, present-participle form
+    "viprp",   # intransitive verb, present-participle form
+    "vphr",    # verb phrase
+    "conj",    # conjunction
+    "advcl",   # adverbial clause
 }
 
-# Regex for a single word-class token, e.g. "n", "idi(vt+adv+adv)", "(n)"
-_WC_ALTS = "|".join(sorted(WORD_CLASSES, key=len, reverse=True))
+# A single WC token, e.g. "n", "idi(vt+adv+adv)", "(n)", "vt-pp"
+_WC_ALTS  = "|".join(sorted(WORD_CLASSES, key=len, reverse=True))
 _WC_TOKEN = r"(?:\(?" + r"(?:" + _WC_ALTS + r")" + r"(?:\([^)]*\))?" + r"\)?)"
-# Full word class: conversion "(n)|vt" or compound "vi+adv" or simple "n"
+
+# A slash-alternative group, e.g. "n/adj" or "adj/v"
+_WC_OPT = r"(?:" + _WC_TOKEN + r"(?:/" + _WC_TOKEN + r")*)"
+
+# A compound (one or more options joined by +), e.g. "vt+pr" or "vi+adv+adv"
+_WC_COMPOUND = r"(?:" + _WC_OPT + r"(?:\+" + _WC_OPT + r")*)"
+
+# Full word class:
+#   conversion  "(n)|vt+pr"  or  "n|n/adj"  — compound on both sides of |
+#   plain compound  "vi+adv"
+#   simple  "n"
 _WC_FULL = (
     r"(?:"
-    r"(?:" + _WC_TOKEN + r"\|" + _WC_TOKEN + r")"   # conversion: (n)|vt
+    r"(?:" + _WC_COMPOUND + r"\|" + _WC_COMPOUND + r")"   # conversion
     r"|"
-    r"(?:" + _WC_TOKEN + r"(?:\+" + _WC_TOKEN + r")*)"  # simple or compound
+    r"(?:" + _WC_COMPOUND + r")"                           # simple / compound
     r")"
 )
 WC_AT_END = re.compile(r"^(.*?)\s*(" + _WC_FULL + r")\s*$", re.DOTALL)
@@ -61,6 +82,11 @@ THEME_FIXUPS = {
     "IS CONTAINER":       "MIND IS CONTAINER",
     "IS BUILDING":        "MIND IS BUILDING",
     "MONEY IS":           "MONEY IS FOOD",
+    # "HIT" was split across a line break in the source docx and lost during
+    # paragraph merging; the guide confirms the full name.
+    # Note: clean_theme_name strips spaces around "/" before this lookup,
+    # so the key must already be normalised.
+    "STEAL IS/CUT/TEAR": "STEAL IS HIT/CUT/TEAR",
 }
 
 
@@ -700,7 +726,8 @@ def summarize(data: dict):
 # ---------------------------------------------------------------------------
 
 def main():
-    docx_path = Path("THE_THESAURUS.docx")
+    repo_root = Path(__file__).parent.parent
+    docx_path = repo_root / "external" / "THE_THESAURUS.docx"
     if not docx_path.exists():
         print("Error: %s not found" % docx_path, file=sys.stderr)
         sys.exit(1)
@@ -717,7 +744,8 @@ def main():
             print("  " + e)
         sys.exit(1)
 
-    out_path = Path("thesaurus.json")
+    out_path = repo_root / "build" / "thesaurus.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     print("\nWrote %s (%d KB)" % (out_path, out_path.stat().st_size // 1024))

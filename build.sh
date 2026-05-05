@@ -7,7 +7,8 @@
 #   ./build.sh --limit 50      smoke-test: first N entries, writes to build/thesaurus_wn_test.json
 #
 # THE_THESAURUS.docx is downloaded automatically from the John Benjamins website
-# if not already present. It is not redistributable and is excluded from git.
+# if not already present.  Both docx files live in external/ which is excluded
+# from git (not redistributable).
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -15,7 +16,8 @@ cd "$(dirname "$0")"
 PYTHON=".venv/bin/python"
 SCRIPTS="scripts"
 BUILD="build"
-THESAURUS_DOCX="THE_THESAURUS.docx"
+EXTERNAL="external"
+THESAURUS_DOCX="$EXTERNAL/THE_THESAURUS.docx"
 METHOD="embeddings"
 SIMCSE=0
 LIMIT=0
@@ -36,6 +38,7 @@ mkdir -p "$BUILD"
 # ── 0a. Thesaurus DOCX ────────────────────────────────────────────────────
 THESAURUS_URL="https://www.benjamins.com/series/hcp/78/THE_THESAURUS.docx"
 echo "=== Step 0a: thesaurus source ==="
+mkdir -p "$EXTERNAL"
 if [[ ! -f "$THESAURUS_DOCX" ]]; then
     echo "Downloading $THESAURUS_DOCX ..."
     curl -fL "$THESAURUS_URL" -o "$THESAURUS_DOCX"
@@ -78,7 +81,6 @@ if [[ ! -f "$THESAURUS_DOCX" ]]; then
     exit 1
 fi
 $PYTHON "$SCRIPTS/extract.py"
-mv -f thesaurus.json "$BUILD/thesaurus.json"
 
 # ── 2. Run tests ───────────────────────────────────────────────────────────
 echo ""
@@ -125,6 +127,18 @@ if [[ $LIMIT -eq 0 ]]; then
         --combined "$BUILD/combined_domain_map.toml" \
         > "$BUILD/domain_map_comparison.txt"
     echo "Comparison → $BUILD/domain_map_comparison.txt"
+fi
+
+# ── 7. Browser DB (full run only) ─────────────────────────────────────────
+if [[ $LIMIT -eq 0 ]]; then
+    echo ""
+    echo "=== Step 7: browser database ==="
+    $PYTHON "$SCRIPTS/make_browser_db.py" \
+        --input "$WN_OUT" \
+        --out   "web/thesaurus.db"
+    gzip -k -9 -f web/thesaurus.db
+    echo "Browser DB → web/thesaurus.db.gz"
+    echo "Serve locally with:  bash web/run.sh"
 fi
 
 if [[ $SIMCSE -eq 1 && $LIMIT -eq 0 ]]; then

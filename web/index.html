@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Metaphor Thesaurus Browser</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔤</text></svg>">
+</head>
+<body class="bg-gray-50 text-gray-900 antialiased">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ── DB layer ───────────────────────────────────────────────────────────────
+let _db = null;
+// Module-level config so components can read it without prop drilling
+let _config = { relations: {}, pos: {} };
+
+// Use prepare() rather than exec() for parameterised queries — exec() does
+// not reliably bind parameters for FTS5 MATCH in all sql.js builds.
+function q(sql, params = []) {
+  if (!_db) return [];
+  try {
+    const stmt = _db.prepare(sql);
+    if (params.length) stmt.bind(params);
+    const cols = stmt.getColumnNames();
+    const rows = [];
+    while (stmt.step()) {
+      const vals = stmt.get();
+      const obj = {};
+      cols.forEach((c, i) => { obj[c] = vals[i]; });
+      rows.push(obj);
+    }
+    stmt.free();
+    return rows;
+  } catch (e) {
+    console.error("SQL error:", sql, params, e);
+    return [];
+  }
+}
+
+function scalar(sql, params = []) {
+  const rows = q(sql, params);
+  return rows.length ? Object.values(rows[0])[0] : null;
+}
+
+// ── Query functions ────────────────────────────────────────────────────────
+function queryStats() {
+  return {
+    n_entries: scalar("SELECT COUNT(*) FROM entries"),
+    n_themes:  scalar("SELECT COUNT(*) FROM themes"),
+    n_parts:   scalar("SELECT COUNT(*) FROM parts"),
+    n_source:  scalar("SELECT COUNT(DISTINCT domain) FROM theme_domains WHERE role='source'"),
+    n_target:  scalar("SELECT COUNT(DISTINCT domain) FROM theme_domains WHERE role='target'"),
+    n_wn:      scalar("SELECT COUNT(DISTINCT entry_id) FROM wn_matches"),
+  };
+}
+
+// LIKE-based search — reliable across all sql.js builds; the table is small
+// enough that a full scan is imperceptibly fast.
+function querySearch(term) {
+  if (!term || term.trim().length < 2) return [];
+  const pat = "%" + term.trim().replace(/[%_]/g, "") + "%";
+  return q(`
+    SELECT e.id, e.headword, e.reversal_prefix, e.literal_meaning,
+           e.metaphorical_meaning, e.wc_metaphorical,
+           t.name AS theme_name, t.id AS theme_id
+    FROM entries e
+    JOIN subsections s ON e.subsection_id = s.id
+    JOIN themes t ON s.theme_id = t.id
+    WHERE lower(e.headword)             LIKE lower(?)
+       OR lower(e.literal_meaning)      LIKE lower(?)
+       OR lower(e.metaphorical_meaning) LIKE lower(?)
+    ORDER BY
+      CASE WHEN lower(e.headword) LIKE lower(?) THEN 0 ELSE 1 END,
+      e.headword COLLATE NOCASE
+    LIMIT 300
+  `, [pat, pat, pat, pat]);
+}
+
+function queryEntryDetail(id) {
+  const rows = q(`
+    SELECT e.id, e.headword, e.reversal_prefix, e.literal_meaning,
+           e.wc_literal, e.wc_metaphorical, e.metaphorical_meaning, e.example,
+           s.heading AS subsection_heading,
+           t.id AS theme_id, t.name AS theme_name,
+           t.target_domains, t.source_domains,
+           p.id AS part_id, p.name AS part_name
+    FROM entries e
+    JOIN subsections s ON e.subsection_id = s.id
+    JOIN themes t ON s.theme_id = t.id
+    JOIN parts p ON t.part_id = p.id
+    WHERE e.id = ?
+  `, [id]);
+  if (!rows.length) return null;
+  const entry = rows[0];
+  entry.wn_matches = q(`SELECT * FROM wn_matches WHERE entry_id = ? ORDER BY role`, [id]);
+  return entry;
+}
+
+function queryThemeDetail(id) {
+  const rows = q(`
+    SELECT t.id, t.name, t.target_domains, t.source_domains,
+           p.id AS part_id, p.name AS part_name
+    FROM themes t JOIN parts p ON t.part_id = p.id
+    WHERE t.id = ?
+  `, [id]);
+  if (!rows.length) return null;
+  const theme = rows[0];
+  theme.relationships = q(
+    `SELECT id, symbol, related_theme FROM relationships WHERE theme_id = ? ORDER BY id`,
+    [id]
+  );
+  const subs = q(
+    `SELECT id, heading, position FROM subsections WHERE theme_id = ? ORDER BY position`,
+    [id]
+  );
+  theme.subsections = subs.map(sub => ({
+    ...sub,
+    entries: q(`
+      SELECT id, headword, reversal_prefix, literal_meaning,
+             wc_metaphorical, metaphorical_meaning, example
+      FROM entries WHERE subsection_id = ? ORDER BY id
+    `, [sub.id]),
+  }));
+  return theme;
+}
+
+function queryThemeByName(name) {
+  const rows = q(`SELECT id FROM themes WHERE name = ? LIMIT 1`, [name]);
+  return rows.length ? rows[0].id : null;
+}
+
+function queryParts() {
+  return q(`
+    SELECT p.id, p.name,
+           COUNT(DISTINCT t.id) AS n_themes,
+           COUNT(e.id) AS n_entries
+    FROM parts p
+    JOIN themes t ON t.part_id = p.id
+    JOIN subsections s ON s.theme_id = t.id
+    JOIN entries e ON e.subsection_id = s.id
+    GROUP BY p.id ORDER BY p.id
+  `);
+}
+
+function queryThemesForPart(partId) {
+  return q(`
+    SELECT t.id, t.name, t.target_domains, t.source_domains,
+           COUNT(e.id) AS n_entries
+    FROM themes t
+    JOIN subsections s ON s.theme_id = t.id
+    JOIN entries e ON e.subsection_id = s.id
+    WHERE t.part_id = ?
+    GROUP BY t.id ORDER BY t.id
+  `, [partId]);
+}
+
+function queryDomains(role) {
+  return q(`
+    SELECT td.domain,
+           COUNT(DISTINCT t.id) AS n_themes,
+           COUNT(e.id) AS n_entries
+    FROM theme_domains td
+    JOIN themes t ON td.theme_id = t.id
+    JOIN subsections s ON s.theme_id = t.id
+    JOIN entries e ON e.subsection_id = s.id
+    WHERE td.role = ?
+    GROUP BY td.domain ORDER BY td.domain
+  `, [role]);
+}
+
+function queryThemesForDomain(domain, role) {
+  return q(`
+    SELECT t.id, t.name, t.target_domains, t.source_domains,
+           COUNT(e.id) AS n_entries
+    FROM theme_domains td
+    JOIN themes t ON td.theme_id = t.id
+    JOIN subsections s ON s.theme_id = t.id
+    JOIN entries e ON e.subsection_id = s.id
+    WHERE td.domain = ? AND td.role = ?
+    GROUP BY t.id ORDER BY t.name
+  `, [domain, role]);
+}
+
+// ── Tooltip ────────────────────────────────────────────────────────────────
+// Wraps any element with a hover tooltip.  All abbreviations in the UI that
+// have an expanded meaning should be wrapped with this component.
+function Tooltip({ content, children, wide }) {
+  if (!content) return children;
+  return (
+    <span className="relative group/tip inline-block">
+      {children}
+      <span
+        className={`pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5
+                    hidden group-hover/tip:block bg-gray-800 text-white text-xs rounded
+                    px-2 py-1 z-50 shadow leading-snug
+                    ${wide ? "w-52 whitespace-normal" : "whitespace-nowrap"}`}
+      >
+        {content}
+        {/* caret */}
+        <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800" />
+      </span>
+    </span>
+  );
+}
+
+// ── Small shared components ────────────────────────────────────────────────
+function PosChip({ pos }) {
+  const info = _config.pos[pos];
+  return (
+    <Tooltip content={info ? info.en : pos}>
+      <span
+        data-testid="pos-chip"
+        className="inline-block px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 cursor-help"
+      >
+        {pos}
+      </span>
+    </Tooltip>
+  );
+}
+
+function RelSymbol({ sym }) {
+  const info = _config.relations[sym];
+  const tip = info ? `${info.en}: ${info.description_en}` : sym;
+  return (
+    <Tooltip content={tip} wide>
+      <code
+        data-testid="relation-symbol"
+        className="w-6 shrink-0 text-indigo-600 font-bold text-center cursor-help"
+      >
+        {sym || "—"}
+      </code>
+    </Tooltip>
+  );
+}
+
+function ThemeName({ name, onClick }) {
+  const parts = name.split(/\bIS\b/);
+  const inner = parts.length === 2 ? (
+    <>
+      <span className="text-amber-700 font-semibold">{parts[0].trim()}</span>
+      <span className="text-gray-400 mx-1 font-normal">IS</span>
+      <span className="text-green-700 font-semibold">{parts[1].trim()}</span>
+    </>
+  ) : (
+    <span className="font-semibold">{name}</span>
+  );
+  if (onClick) {
+    return (
+      <span
+        data-testid="theme-name-link"
+        className="cursor-pointer hover:underline underline-offset-2"
+        onClick={onClick}
+      >
+        {inner}
+      </span>
+    );
+  }
+  return <span>{inner}</span>;
+}
+
+function DomainPills({ targets, sources, onDomainClick }) {
+  const tArr = typeof targets === "string" ? JSON.parse(targets) : (targets || []);
+  const sArr = typeof sources === "string" ? JSON.parse(sources) : (sources || []);
+  if (!tArr.length && !sArr.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {tArr.map(d => (
+        <span
+          key={d}
+          data-testid="target-domain-pill"
+          onClick={onDomainClick ? () => onDomainClick(d, "target") : undefined}
+          className={`px-1.5 py-0.5 rounded text-xs bg-amber-100 text-amber-800
+            ${onDomainClick ? "cursor-pointer hover:bg-amber-200" : ""}`}
+        >
+          ▶ {d}
+        </span>
+      ))}
+      {sArr.map(d => (
+        <span
+          key={d}
+          data-testid="source-domain-pill"
+          onClick={onDomainClick ? () => onDomainClick(d, "source") : undefined}
+          className={`px-1.5 py-0.5 rounded text-xs bg-green-100 text-green-800
+            ${onDomainClick ? "cursor-pointer hover:bg-green-200" : ""}`}
+        >
+          ◆ {d}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ── Entry card ─────────────────────────────────────────────────────────────
+function EntryCard({ entry, onClick, selected }) {
+  return (
+    <div
+      data-testid="entry-card"
+      onClick={() => onClick(entry.id)}
+      className={`p-2.5 border rounded-lg cursor-pointer transition-colors select-none
+        ${selected
+          ? "border-indigo-400 bg-indigo-50"
+          : "border-gray-200 bg-white hover:border-indigo-300 hover:bg-gray-50"}`}
+    >
+      <div className="flex items-baseline gap-1.5 flex-wrap">
+        <span className="font-semibold text-gray-900">{entry.headword}</span>
+        {entry.reversal_prefix === ">>" && (
+          <span className="inline-block px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-600">
+            reversal
+          </span>
+        )}
+        {entry.wc_metaphorical && <PosChip pos={entry.wc_metaphorical} />}
+      </div>
+      {entry.literal_meaning && (
+        <div className="text-sm text-gray-500 truncate">{entry.literal_meaning}</div>
+      )}
+    </div>
+  );
+}
+
+// ── Entry detail ───────────────────────────────────────────────────────────
+function EntryDetail({ entry, showWordNet, onThemeClick, onDomainClick }) {
+  if (!entry) {
+    return (
+      <div className="flex items-center justify-center h-48 text-gray-400 text-sm">
+        Select an entry to view details
+      </div>
+    );
+  }
+  const wnLit  = entry.wn_matches?.find(m => m.role === "literal");
+  const wnMeta = entry.wn_matches?.find(m => m.role === "metaphorical");
+
+  return (
+    <div data-testid="entry-detail" className="space-y-4">
+      <div>
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <h2 className="text-2xl font-bold text-gray-900">{entry.headword}</h2>
+          {entry.reversal_prefix === ">>" && (
+            <span className="inline-block px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-600">
+              reversal
+            </span>
+          )}
+          {entry.wc_literal && <PosChip pos={entry.wc_literal} />}
+        </div>
+        {entry.subsection_heading && (
+          <div className="text-xs text-gray-400 italic mt-0.5">{entry.subsection_heading}</div>
+        )}
+      </div>
+
+      <div className="bg-gray-50 rounded-lg p-4 space-y-3 text-sm">
+        {entry.literal_meaning && (
+          <div>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
+              Literal meaning
+            </div>
+            <div className="text-gray-800">
+              {entry.literal_meaning}
+              {entry.wc_literal && entry.wc_literal !== entry.wc_metaphorical && (
+                <span className="ml-1"><PosChip pos={entry.wc_literal} /></span>
+              )}
+            </div>
+          </div>
+        )}
+        {entry.metaphorical_meaning && (
+          <div>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
+              Metaphorical meaning
+            </div>
+            <div className="font-semibold text-indigo-800">
+              {entry.metaphorical_meaning}
+              {entry.wc_metaphorical && (
+                <span className="ml-1 font-normal"><PosChip pos={entry.wc_metaphorical} /></span>
+              )}
+            </div>
+          </div>
+        )}
+        {entry.example && (
+          <div>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
+              Example
+            </div>
+            <div className="text-gray-700 italic">"{entry.example}"</div>
+          </div>
+        )}
+      </div>
+
+      <div className="text-sm space-y-1">
+        <div className="flex items-start gap-2">
+          <span className="text-gray-400 shrink-0 pt-0.5">Theme:</span>
+          <ThemeName name={entry.theme_name} onClick={() => onThemeClick(entry.theme_id)} />
+        </div>
+        <div className="text-xs text-gray-400">{entry.part_name}</div>
+        <DomainPills
+          targets={entry.target_domains}
+          sources={entry.source_domains}
+          onDomainClick={onDomainClick}
+        />
+      </div>
+
+      {showWordNet && (
+        <div data-testid="wn-section" className="border border-purple-200 rounded-lg overflow-hidden">
+          <div className="bg-purple-100 px-3 py-2 text-xs font-semibold text-purple-800 uppercase tracking-wide">
+            WordNet matches
+          </div>
+          {wnLit || wnMeta ? (
+            <div className="p-3 space-y-3">
+              {[["Literal", wnLit], ["Metaphorical", wnMeta]].map(([label, m]) =>
+                m && (
+                  <div key={label}>
+                    <div className="text-xs font-medium text-gray-500 uppercase mb-1">{label}</div>
+                    <div className="bg-white rounded border border-purple-100 p-2.5 space-y-1 text-sm">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <code className="text-xs bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200">
+                          {m.synset_id}
+                        </code>
+                        <Tooltip content={_config.pos[m.pos]?.en || m.pos}>
+                          <span className="inline-block px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 cursor-help">
+                            {m.pos}
+                          </span>
+                        </Tooltip>
+                        <span className="text-xs text-gray-400">
+                          score {m.total != null ? m.total.toFixed(3) : "—"}
+                          {" "}(def {m.def_score != null ? m.def_score.toFixed(2) : "—"},
+                          hyp {m.hyper_score != null ? m.hyper_score.toFixed(2) : "—"})
+                        </span>
+                      </div>
+                      {m.definition && <div className="text-gray-700">{m.definition}</div>}
+                      {m.lemmas && JSON.parse(m.lemmas).length > 0 && (
+                        <div className="text-xs text-gray-500">
+                          Lemmas: {JSON.parse(m.lemmas).join(", ")}
+                        </div>
+                      )}
+                      {m.hyper_matched && Object.keys(JSON.parse(m.hyper_matched)).length > 0 && (
+                        <div className="text-xs text-gray-500">
+                          Hypernym:{" "}
+                          {Object.entries(JSON.parse(m.hyper_matched)).map(([dom, hit]) => (
+                            <span key={dom} className="mr-2">
+                              <span className={
+                                label === "Literal"
+                                  ? "text-green-700 font-medium"
+                                  : "text-amber-700 font-medium"
+                              }>{dom}</span>
+                              {" → "}{hit.synset_id}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {m.method && (
+                        <div className="text-xs text-gray-400">method: {m.method}</div>
+                      )}
+                    </div>
+                  </div>
+                )
+              )}
+            </div>
+          ) : (
+            <div className="px-3 py-4 text-sm text-gray-400 italic">
+              No WordNet matches for this entry.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Theme detail ───────────────────────────────────────────────────────────
+const ENTRIES_PER_SUB = 12;
+
+function ThemeDetail({ theme, onEntryClick, onThemeClick, onDomainClick, selectedEntryId }) {
+  const [expanded, setExpanded] = useState({});
+
+  if (!theme) {
+    return (
+      <div className="flex items-center justify-center h-48 text-gray-400 text-sm">
+        Select a theme to view details
+      </div>
+    );
+  }
+
+  const toggle = id => setExpanded(s => ({ ...s, [id]: !s[id] }));
+
+  return (
+    <div data-testid="theme-detail" className="space-y-4">
+      <div>
+        <div className="text-xs text-gray-400 mb-1">{theme.part_name}</div>
+        <h2 className="text-xl font-bold">
+          <ThemeName name={theme.name} />
+        </h2>
+        <DomainPills
+          targets={theme.target_domains}
+          sources={theme.source_domains}
+          onDomainClick={onDomainClick}
+        />
+      </div>
+
+      {theme.relationships?.length > 0 && (
+        <div className="bg-gray-50 rounded-lg p-3">
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+            Related themes
+          </div>
+          <div className="space-y-1">
+            {theme.relationships.map((r, i) => {
+              const relThemeId = queryThemeByName(r.related_theme);
+              return (
+                <div key={i} className="flex items-baseline gap-2 text-sm">
+                  <RelSymbol sym={r.symbol} />
+                  {relThemeId ? (
+                    <ThemeName
+                      name={r.related_theme}
+                      onClick={() => onThemeClick(relThemeId)}
+                    />
+                  ) : (
+                    <span className="text-gray-700">{r.related_theme}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {theme.subsections?.map(sub => {
+        const show = expanded[sub.id];
+        const visible = show ? sub.entries : sub.entries.slice(0, ENTRIES_PER_SUB);
+        const hidden = sub.entries.length - ENTRIES_PER_SUB;
+        return (
+          <div key={sub.id}>
+            {sub.heading && (
+              <div className="text-sm font-medium text-gray-600 italic mb-2">{sub.heading}</div>
+            )}
+            <div className="space-y-1.5">
+              {visible.map(e => (
+                <EntryCard
+                  key={e.id}
+                  entry={e}
+                  onClick={onEntryClick}
+                  selected={e.id === selectedEntryId}
+                />
+              ))}
+            </div>
+            {!show && hidden > 0 && (
+              <button
+                className="mt-2 text-xs text-indigo-600 hover:underline"
+                onClick={() => toggle(sub.id)}
+              >
+                Show {hidden} more…
+              </button>
+            )}
+            {show && hidden > 0 && (
+              <button
+                className="mt-2 text-xs text-indigo-600 hover:underline"
+                onClick={() => toggle(sub.id)}
+              >
+                Show fewer
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Left panels ────────────────────────────────────────────────────────────
+function SearchPanel({ results, selectedId, onEntryClick, query, onQueryChange }) {
+  return (
+    <div className="flex flex-col gap-3 h-full">
+      <input
+        data-testid="search-input"
+        type="search"
+        value={query}
+        onChange={e => onQueryChange(e.target.value)}
+        placeholder="Search headwords and meanings…"
+        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                   focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        autoFocus
+      />
+      {query.length >= 2 && (
+        <div className="text-xs text-gray-400">
+          {results.length >= 300
+            ? "300+ results — refine your query"
+            : `${results.length} result${results.length !== 1 ? "s" : ""}`}
+        </div>
+      )}
+      <div className="overflow-y-auto flex-1 space-y-1.5 pr-1">
+        {results.map(e => (
+          <EntryCard key={e.id} entry={e} onClick={onEntryClick} selected={e.id === selectedId} />
+        ))}
+        {query.length >= 2 && results.length === 0 && (
+          <div className="text-sm text-gray-400 text-center pt-8">No results</div>
+        )}
+        {query.length > 0 && query.length < 2 && (
+          <div className="text-sm text-gray-400 text-center pt-8">Type at least 2 characters</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HierarchyPanel({ parts, expandedParts, themesForPart, selectedThemeId,
+                           onTogglePart, onThemeClick }) {
+  return (
+    <div className="overflow-y-auto flex-1 space-y-1 pr-1">
+      {parts.map(part => {
+        const open = expandedParts.has(part.id);
+        const themes = themesForPart[part.id] || [];
+        return (
+          <div key={part.id}>
+            <button
+              onClick={() => onTogglePart(part.id)}
+              className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left
+                         hover:bg-gray-100 transition-colors text-sm font-medium text-gray-800"
+            >
+              <span className="text-gray-400 w-4 shrink-0">{open ? "▾" : "▸"}</span>
+              <span className="flex-1 truncate">{part.name || `Part ${part.id}`}</span>
+              <span className="text-xs text-gray-400 shrink-0">
+                {part.n_themes}T · {part.n_entries}E
+              </span>
+            </button>
+            {open && (
+              <div className="ml-5 space-y-0.5 mb-1">
+                {themes.map(t => (
+                  <button
+                    key={t.id}
+                    data-testid="hierarchy-theme-btn"
+                    onClick={() => onThemeClick(t.id)}
+                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded text-left
+                                text-xs transition-colors
+                                ${t.id === selectedThemeId
+                                  ? "bg-indigo-100 text-indigo-800"
+                                  : "hover:bg-gray-100 text-gray-700"}`}
+                  >
+                    <span className="flex-1 truncate">
+                      <ThemeName name={t.name} />
+                    </span>
+                    <span className="text-gray-400 shrink-0">{t.n_entries}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DomainPanel({ role, domains, selectedDomain, domainThemes,
+                        selectedThemeId, onDomainClick, onThemeClick }) {
+  const isSource = role === "source";
+  return (
+    <div className="flex flex-col h-full gap-2">
+      <div className="text-xs text-gray-500">
+        {isSource
+          ? "Source domains — the concrete realm the metaphor draws from"
+          : "Target domains — the abstract concept the metaphor describes"}
+      </div>
+      <div className="flex gap-2 flex-1 min-h-0">
+        <div className="w-2/5 overflow-y-auto pr-1 space-y-0.5 border-r border-gray-100">
+          {domains.map(d => (
+            <button
+              key={d.domain}
+              data-testid="domain-list-item"
+              onClick={() => onDomainClick(d.domain)}
+              className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors
+                ${d.domain === selectedDomain
+                  ? `${isSource ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"} font-semibold`
+                  : "hover:bg-gray-100 text-gray-700"}`}
+            >
+              <div className="truncate font-medium">{d.domain}</div>
+              <div className="text-gray-400">{d.n_themes}T · {d.n_entries}E</div>
+            </button>
+          ))}
+        </div>
+        <div className="flex-1 overflow-y-auto pr-1 space-y-0.5">
+          {selectedDomain && domainThemes.length === 0 && (
+            <div className="text-xs text-gray-400 text-center pt-8">No themes</div>
+          )}
+          {!selectedDomain && (
+            <div className="text-xs text-gray-400 text-center pt-8">Select a domain</div>
+          )}
+          {domainThemes.map(t => (
+            <button
+              key={t.id}
+              data-testid="domain-theme-btn"
+              onClick={() => onThemeClick(t.id)}
+              className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors
+                ${t.id === selectedThemeId
+                  ? "bg-indigo-100 text-indigo-800"
+                  : "hover:bg-gray-100 text-gray-700"}`}
+            >
+              <div className="truncate"><ThemeName name={t.name} /></div>
+              <div className="text-gray-400">{t.n_entries} entries</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Reference tab ──────────────────────────────────────────────────────────
+function ReferenceTab({ config }) {
+  const rels = Object.entries(config.relations || {});
+  const pos  = Object.entries(config.pos || {});
+  return (
+    <div className="max-w-3xl space-y-10">
+      <section>
+        <h2 className="text-lg font-semibold text-gray-800 mb-3">
+          Semantic relationship symbols
+        </h2>
+        <p className="text-sm text-gray-600 mb-4">
+          Relationships between metaphor themes, as used in the printed thesaurus
+          and in the <em>Related themes</em> section of each theme view.
+          Hover any symbol to see its meaning.
+        </p>
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="bg-gray-100 text-left">
+              <th className="px-4 py-2 font-semibold text-gray-700 border border-gray-200 w-16">Symbol</th>
+              <th className="px-4 py-2 font-semibold text-gray-700 border border-gray-200 w-36">Name</th>
+              <th className="px-4 py-2 font-semibold text-gray-700 border border-gray-200">Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rels.map(([sym, info]) => (
+              <tr key={sym} className="even:bg-gray-50">
+                <td className="px-4 py-2 border border-gray-200 font-mono text-indigo-700 text-center text-base">
+                  {sym}
+                </td>
+                <td className="px-4 py-2 border border-gray-200 font-medium text-gray-800">
+                  {info.en}
+                </td>
+                <td className="px-4 py-2 border border-gray-200 text-gray-600">
+                  {info.description_en}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-gray-800 mb-3">
+          Word-class abbreviations
+        </h2>
+        <p className="text-sm text-gray-600 mb-4">
+          Each entry records the part of speech for its literal and metaphorical
+          uses.  Conversion entries (e.g.{" "}
+          <code className="bg-gray-100 px-1 rounded">(n)|vt</code>) indicate a
+          shift in word class between the two senses.
+          Hover any abbreviation badge in the browser to see the full name.
+        </p>
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="bg-gray-100 text-left">
+              <th className="px-4 py-2 font-semibold text-gray-700 border border-gray-200 w-28">Abbreviation</th>
+              <th className="px-4 py-2 font-semibold text-gray-700 border border-gray-200">Full name</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pos.map(([abbr, info]) => (
+              <tr key={abbr} className="even:bg-gray-50">
+                <td className="px-4 py-2 border border-gray-200 font-mono text-blue-700">{abbr}</td>
+                <td className="px-4 py-2 border border-gray-200 text-gray-700">{info.en}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
+// ── About tab ──────────────────────────────────────────────────────────────
+function AboutTab({ stats }) {
+  const Stat = ({ n, label }) => (
+    <div className="text-center">
+      <div className="text-3xl font-bold text-indigo-700">
+        {n != null ? n.toLocaleString() : "—"}
+      </div>
+      <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+    </div>
+  );
+  return (
+    <div className="max-w-2xl space-y-8 text-sm text-gray-700">
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 bg-indigo-50 rounded-xl p-6">
+        <Stat n={stats.n_entries} label="entries" />
+        <Stat n={stats.n_themes}  label="themes" />
+        <Stat n={stats.n_parts}   label="parts" />
+        <Stat n={stats.n_source}  label="source domains" />
+        <Stat n={stats.n_target}  label="target domains" />
+        <Stat n={stats.n_wn}      label="WordNet matches" />
+      </div>
+
+      <section>
+        <h2 className="text-base font-semibold text-gray-800 mb-2">About the thesaurus</h2>
+        <p className="mb-3">
+          This browser provides access to the <em>Metaphor and Metonymy Thesaurus</em>,
+          the supplementary data accompanying:
+        </p>
+        <blockquote className="border-l-4 border-indigo-300 pl-4 text-gray-600 italic mb-3">
+          Andrew Goatly (2011).{" "}
+          <a href="https://www.benjamins.com/catalog/hcp.78" target="_blank" rel="noopener noreferrer"
+             className="text-indigo-700 hover:underline not-italic font-medium">
+            Meaning and Humour
+          </a>
+          . Human Cognitive Processing 78. Amsterdam: John Benjamins.
+        </blockquote>
+        <p className="mb-3">
+          The thesaurus organises English lexical items by the conceptual metaphors they
+          realise. Each entry records a headword, its literal meaning, its metaphorical
+          meaning, the word class(es) involved, an example sentence, and the metaphor theme
+          (of the form <strong>TARGET IS SOURCE</strong>) to which it belongs.
+        </p>
+        <p>
+          The supplementary thesaurus data is available from the publisher at{" "}
+          <a href="https://www.benjamins.com/catalog/hcp.78/additional" target="_blank" rel="noopener noreferrer"
+             className="text-indigo-700 hover:underline">
+            benjamins.com/catalog/hcp.78/additional
+          </a>
+          .  It is the work of <strong>Andrew Goatly</strong> and is reproduced here
+          with permission for research and educational use.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="text-base font-semibold text-gray-800 mb-2">WordNet sense linking</h2>
+        <p className="mb-2">
+          Each entry has been automatically linked to the best matching synset in the
+          Open Multilingual Wordnet (<code className="bg-gray-100 px-1 rounded">omw-en:2.0</code>)
+          using two signals combined as{" "}
+          <em>α · definition + (1−α) · hypernym</em> (default α = 0.5):
+        </p>
+        <ul className="list-disc list-inside space-y-1 text-gray-600 mb-2">
+          <li>
+            <strong>Definition similarity</strong> — Jaccard bag-of-words overlap or cosine
+            similarity via Ollama embeddings.
+          </li>
+          <li>
+            <strong>Hypernym chain matching</strong> — BFS over the WordNet hypernym graph,
+            finding ancestors whose lemmas match the SOURCE or TARGET domain label.
+          </li>
+        </ul>
+        <p>
+          Toggle <strong>Show WordNet links</strong> in the header to display synset details
+          alongside each entry.
+        </p>
+      </section>
+
+      <section className="border-t border-gray-200 pt-6 space-y-3">
+        <div className="flex flex-col sm:flex-row gap-6">
+          <div className="flex-1">
+            <div className="font-semibold text-gray-800 mb-1">Thesaurus data</div>
+            <div>
+              © Andrew Goatly.  Supplementary material to{" "}
+              <a href="https://www.benjamins.com/catalog/hcp.78" target="_blank" rel="noopener noreferrer"
+                 className="text-indigo-700 hover:underline">
+                Meaning and Humour
+              </a>
+              , John Benjamins, 2011.
+            </div>
+          </div>
+          <div className="flex-1">
+            <div className="font-semibold text-gray-800 mb-1">Browser &amp; WordNet linking</div>
+            <div>
+              Developed by the{" "}
+              <a href="https://bond-lab.github.io/" target="_blank" rel="noopener noreferrer"
+                 className="text-indigo-700 hover:underline">
+                Computational Linguistics Lab
+              </a>
+              {" "}(NTU / Palacký University Olomouc).
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ── Main App ───────────────────────────────────────────────────────────────
+function App() {
+  const [dbReady,       setDbReady]       = useState(false);
+  const [dbError,       setDbError]       = useState(null);
+  const [config,        setConfig]        = useState({ relations: {}, pos: {} });
+  const [activeTab,     setActiveTab]     = useState("browser");
+  const [browseMode,    setBrowseMode]    = useState("search");
+  const [searchQuery,   setSearchQuery]   = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [detail,        setDetail]        = useState(null);   // {type, data}
+  const [showWordNet,   setShowWordNet]   = useState(false);
+  const [stats,         setStats]         = useState({});
+
+  const [parts,         setParts]         = useState([]);
+  const [expandedParts, setExpandedParts] = useState(new Set());
+  const [themesForPart, setThemesForPart] = useState({});
+
+  const [browseRole,     setBrowseRole]    = useState("source");
+  const [domains,        setDomains]       = useState([]);
+  const [selectedDomain, setSelectedDomain]= useState(null);
+  const [domainThemes,   setDomainThemes]  = useState([]);
+
+  const selectedEntryId = detail?.type === "entry" ? detail.data?.id : null;
+  const selectedThemeId = detail?.type === "theme" ? detail.data?.id : null;
+
+  // DB + config loading
+  useEffect(() => {
+    async function init() {
+      try {
+        const SQL = await initSqlJs({
+          locateFile: f =>
+            `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}`
+        });
+        const resp = await fetch("thesaurus.db.gz");
+        if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching thesaurus.db.gz`);
+        const ds  = new DecompressionStream("gzip");
+        const buf = await new Response(resp.body.pipeThrough(ds)).arrayBuffer();
+        _db = new SQL.Database(new Uint8Array(buf));
+        setStats(queryStats());
+        setDbReady(true);
+      } catch (e) {
+        console.error(e);
+        setDbError(e.message);
+      }
+    }
+    init();
+  }, []);
+
+  useEffect(() => {
+    fetch("config.json")
+      .then(r => r.json())
+      .then(cfg => { _config = cfg; setConfig(cfg); })
+      .catch(() => {});
+  }, []);
+
+  // Debounced search
+  const searchTimer = useRef(null);
+  useEffect(() => {
+    if (!dbReady) return;
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setSearchResults(searchQuery.trim().length >= 2 ? querySearch(searchQuery) : []);
+    }, 180);
+    return () => clearTimeout(searchTimer.current);
+  }, [searchQuery, dbReady]);
+
+  // Lazy-load parts for hierarchy
+  useEffect(() => {
+    if (dbReady && browseMode === "hierarchy" && !parts.length) {
+      setParts(queryParts());
+    }
+  }, [dbReady, browseMode, parts.length]);
+
+  // Load domains when entering source/target mode
+  useEffect(() => {
+    if (!dbReady) return;
+    if (browseMode === "source" || browseMode === "target") {
+      setBrowseRole(browseMode);
+      setDomains(queryDomains(browseMode));
+      setSelectedDomain(null);
+      setDomainThemes([]);
+    }
+  }, [dbReady, browseMode]);
+
+  const handleEntryClick = useCallback(id => {
+    setDetail({ type: "entry", data: queryEntryDetail(id) });
+  }, []);
+
+  const handleThemeClick = useCallback(id => {
+    setDetail({ type: "theme", data: queryThemeDetail(id) });
+  }, []);
+
+  // Navigate to a source/target domain — switches mode and pre-selects the domain
+  const handleDomainPillClick = useCallback((domain, role) => {
+    setBrowseMode(role);
+    setBrowseRole(role);
+    setDomains(queryDomains(role));
+    setSelectedDomain(domain);
+    setDomainThemes(queryThemesForDomain(domain, role));
+    setDetail(null);
+  }, []);
+
+  const handleDomainListClick = useCallback(domain => {
+    setSelectedDomain(domain);
+    setDomainThemes(queryThemesForDomain(domain, browseRole));
+    setDetail(null);
+  }, [browseRole]);
+
+  const handleTogglePart = useCallback(partId => {
+    setExpandedParts(prev => {
+      const next = new Set(prev);
+      if (next.has(partId)) {
+        next.delete(partId);
+      } else {
+        next.add(partId);
+        setThemesForPart(t => {
+          if (t[partId]) return t;
+          return { ...t, [partId]: queryThemesForPart(partId) };
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  const switchMode = mode => {
+    setBrowseMode(mode);
+    setDetail(null);
+    setSelectedDomain(null);
+  };
+
+  const MODES = [
+    { id: "search",    label: "Search" },
+    { id: "hierarchy", label: "Hierarchy" },
+    { id: "source",    label: "By Source" },
+    { id: "target",    label: "By Target" },
+  ];
+
+  return (
+    <div className="min-h-screen flex flex-col bg-gray-50">
+      {/* Header */}
+      <header className="bg-indigo-900 text-white px-6 py-4 shrink-0">
+        <div className="max-w-7xl mx-auto flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">
+              Metaphor Thesaurus Browser
+            </h1>
+            <div className="text-indigo-200 text-sm mt-0.5">
+              Goatly's <em>Metaphor, Metonymy and Lexicogenesis</em> thesaurus
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+            <input
+              data-testid="wn-toggle"
+              type="checkbox"
+              checked={showWordNet}
+              onChange={e => setShowWordNet(e.target.checked)}
+              className="rounded accent-indigo-400"
+            />
+            <span>Show WordNet links</span>
+          </label>
+        </div>
+      </header>
+
+      {/* Tab bar */}
+      <nav className="bg-white border-b border-gray-200 shrink-0">
+        <div className="max-w-7xl mx-auto px-6 flex">
+          {[["browser", "Browse"], ["reference", "Reference"], ["about", "About"]].map(
+            ([id, label]) => (
+              <button
+                key={id}
+                data-testid={`tab-${id}`}
+                onClick={() => setActiveTab(id)}
+                className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors
+                  ${activeTab === id
+                    ? "border-indigo-600 text-indigo-600"
+                    : "border-transparent text-gray-500 hover:text-gray-700"}`}
+              >
+                {label}
+              </button>
+            )
+          )}
+        </div>
+      </nav>
+
+      {/* Main content */}
+      <main className="max-w-7xl w-full mx-auto px-6 py-6 flex-1 flex flex-col">
+        {!dbReady && !dbError && (
+          <div className="flex-1 flex items-center justify-center text-gray-500">
+            <div className="text-center space-y-2">
+              <div className="text-lg">Loading thesaurus database…</div>
+              <div className="text-sm text-gray-400">Fetching and decompressing thesaurus.db.gz</div>
+            </div>
+          </div>
+        )}
+        {dbError && (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center text-red-600 space-y-2 max-w-md">
+              <div className="text-lg font-semibold">Failed to load database</div>
+              <div className="text-sm bg-red-50 border border-red-200 rounded p-3">{dbError}</div>
+              <div className="text-sm text-gray-500">
+                Serve the page over HTTP (not file://) and ensure thesaurus.db.gz is present.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "reference" && <ReferenceTab config={config} />}
+        {activeTab === "about"     && <AboutTab stats={stats} />}
+
+        {dbReady && activeTab === "browser" && (
+          <div className="flex flex-col flex-1 gap-4">
+            {/* Mode selector */}
+            <div className="flex gap-1 bg-gray-100 rounded-lg p-1 self-start">
+              {MODES.map(m => (
+                <button
+                  key={m.id}
+                  data-testid={`mode-${m.id}`}
+                  onClick={() => switchMode(m.id)}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors
+                    ${browseMode === m.id
+                      ? "bg-white text-indigo-700 shadow-sm"
+                      : "text-gray-600 hover:text-gray-800"}`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Two-column layout */}
+            <div className="flex gap-6 flex-1 min-h-0" style={{ height: "calc(100vh - 240px)" }}>
+              {/* Left: navigation */}
+              <div className="w-80 shrink-0 flex flex-col overflow-hidden">
+                {browseMode === "search" && (
+                  <SearchPanel
+                    results={searchResults}
+                    selectedId={selectedEntryId}
+                    onEntryClick={handleEntryClick}
+                    query={searchQuery}
+                    onQueryChange={setSearchQuery}
+                  />
+                )}
+                {browseMode === "hierarchy" && (
+                  <HierarchyPanel
+                    parts={parts}
+                    expandedParts={expandedParts}
+                    themesForPart={themesForPart}
+                    selectedThemeId={selectedThemeId}
+                    onTogglePart={handleTogglePart}
+                    onThemeClick={handleThemeClick}
+                  />
+                )}
+                {(browseMode === "source" || browseMode === "target") && (
+                  <DomainPanel
+                    role={browseRole}
+                    domains={domains}
+                    selectedDomain={selectedDomain}
+                    domainThemes={domainThemes}
+                    selectedThemeId={selectedThemeId}
+                    onDomainClick={handleDomainListClick}
+                    onThemeClick={handleThemeClick}
+                  />
+                )}
+              </div>
+
+              {/* Right: detail */}
+              <div className="flex-1 overflow-y-auto border border-gray-200 rounded-xl bg-white p-5">
+                {detail?.type === "entry" && (
+                  <EntryDetail
+                    entry={detail.data}
+                    showWordNet={showWordNet}
+                    onThemeClick={handleThemeClick}
+                    onDomainClick={handleDomainPillClick}
+                  />
+                )}
+                {detail?.type === "theme" && (
+                  <ThemeDetail
+                    theme={detail.data}
+                    onEntryClick={handleEntryClick}
+                    onThemeClick={handleThemeClick}
+                    onDomainClick={handleDomainPillClick}
+                    selectedEntryId={selectedEntryId}
+                  />
+                )}
+                {!detail && (
+                  <div className="flex items-center justify-center h-48 text-gray-400 text-sm">
+                    Select an entry or theme to view details
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="border-t border-gray-200 bg-white text-xs text-gray-400 py-3 px-6 shrink-0">
+        <div className="max-w-7xl mx-auto flex flex-wrap gap-4 justify-between">
+          <span>
+            Thesaurus © Andrew Goatly —{" "}
+            <a href="https://www.benjamins.com/catalog/hcp.78" target="_blank" rel="noopener noreferrer"
+               className="hover:underline text-indigo-500">
+              Meaning and Humour
+            </a>
+            {" "}(John Benjamins, 2011) ·{" "}
+            <a href="https://www.benjamins.com/catalog/hcp.78/additional" target="_blank" rel="noopener noreferrer"
+               className="hover:underline text-indigo-500">
+              Thesaurus data
+            </a>
+          </span>
+          <span>
+            Browser by the{" "}
+            <a href="https://bond-lab.github.io/" target="_blank" rel="noopener noreferrer"
+               className="hover:underline text-indigo-500">
+              Computational Linguistics Lab
+            </a>
+          </span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

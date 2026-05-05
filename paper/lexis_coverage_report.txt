@@ -1,0 +1,436 @@
+LEXIS INDEX COVERAGE REPORT
+======================================================================
+Guide entries with page numbers :   6866
+Present in extracted thesaurus  :   6517  (94.9%)
+Missing                         :    349  (5.1%)
+
+SUMMARY BY CATEGORY
+----------------------------------------------------------------------
+  Category                                       Count      %
+  ---------------------------------------------  -----  -----
+  Guide strips leading article/preposition          82   1.2%
+  Guide uses shorter base form                      59   0.9%
+  Guide picks one slash-alternative                 22   0.3%
+  Similar but different phrasing in thesaurus      113   1.6%
+  Hyphenation / spacing variant                      7   0.1%
+  Guide typo or garbled entry                        1   0.0%
+  Not found under any matching form                 65   0.9%
+
+
+======================================================================
+CATEGORY: Guide strips leading article/preposition
+Count: 82
+
+The guide's alphabetical index omits a leading article or preposition (a, an, the, at, in, to) that the thesaurus retains.  E.g. guide 'about face' → thesaurus 'an about face'.
+
+  Guide form                                     Thesaurus form / note
+  ---------------------------------------------  ------------------------------
+  a rate of knots                                at a rate of knots
+  about face                                     an about face
+  about turn                                     an about turn
+  ace up your sleeve                             an ace up your sleeve
+  ball's in your court                           the ball's in your court
+  bigger they are, the harder they fall          the bigger they are, the harder they fall
+  bird has flown                                 the bird has flown
+  bit                                            a bit
+  bit of                                         a bit of
+  bit of fluff                                   a bit of fluff
+  bit of skirt                                   a bit of skirt
+  bitter pill                                    a bitter pill
+  body of water                                  a body of water
+  bottom line                                    the bottom line
+  brink                                          the brink
+  chop                                           the chop
+  cloud hanging over                             a cloud hanging over
+  coast is clear                                 the coast is clear
+  cold fish                                      a cold fish
+  course of history                              the course of history
+  curtain rises on                               the curtain rises on
+  damp squib                                     a damp squib
+  dark ages                                      the dark ages
+  departed                                       the departed
+  dregs                                          the dregs
+  drop in the ocean                              a drop in the ocean
+  false dawn                                     a false dawn
+  fine line                                      a fine line
+  fixture                                        a fixture
+  foot in the door                               a foot in the door
+  friend of                                      a friend of
+  full life                                      a full life
+  gap widens                                     the gap widens
+  ghost of a                                     the ghost of a
+  glutton for                                    a glutton for
+  going concern                                  a going concern
+  good innings                                   a good innings
+  grass is always greener                        the grass is always greener
+  gravy train                                    the gravy train
+  green light                                    the green light
+  handful                                        a handful
+  helm                                           the helm
+  hot contest                                    a hot contest
+  launching pad                                  a launching pad
+  lone wolf                                      a lone wolf
+  long and the short of it                       the long and the short of it
+  long shot                                      a long shot
+  long way from being                            a long way from being
+  long way off                                   a long way off
+  name to conjure with                           a name to conjure with
+  near miss                                      a near miss
+  nearest thing to                               the nearest thing to
+  open mind                                      an open mind
+  open secret                                    an open secret
+  outside world                                  the outside world
+  penny drops                                    the penny drops
+  penny has dropped                              the penny has dropped
+  place in the sun                               a place in the sun
+  red rag to a bull                              a red rag to a bull
+  rot set in                                     the rot set in
+  second string to your bow                      a second string to your bow
+  shadow of                                      a shadow of
+  shiver down the spine                          a shiver down the spine
+  shot in the dark                               a shot in the dark
+  show must go on                                the show must go on
+  sky's the limit                                the sky's the limit
+  snake in the grass                             a snake in the grass
+  snip                                           a snip
+  soft touch                                     a soft touch
+  song and dance                                 a song and dance
+  sore point/spot                                a sore point/spot
+  step at a time                                 a step at a time
+  step forward                                   a step forward
+  stream of                                      a stream of
+  thin end of the wedge                          the thin end of the wedge
+  ticket to                                      a ticket to
+  weight off your shoulders                      a weight off your shoulders
+  weight on your shoulders                       a weight on your shoulders
+  wet blanket                                    a wet blanket
+  whale of                                       a whale of
+  wolf in sheep's clothing                       a wolf in sheep's clothing
+  wrong side of                                  the wrong side of
+
+
+======================================================================
+CATEGORY: Guide uses shorter base form
+Count: 59
+
+The guide indexes a shorter or base form of a headword; the thesaurus stores the full expression.  E.g. guide 'adhere' → thesaurus 'adhere to'; guide 'against the stream' → thesaurus 'against the stream/tide'.
+
+  Guide form                                     Thesaurus form / note
+  ---------------------------------------------  ------------------------------
+  adhere                                         adhere to
+  against the stream                             against the stream/tide
+  battlefield                                    battlefield/battleground
+  below par                                      below par (
+  blow your stack                                blow your stack/top
+  bucket-loads                                   bucket-loads/buckets
+  cauliflower ear                                cauliflower ear (
+  come down                                      come down in the world
+  cornflower blue                                cornflower blue (
+  descend                                        descend from
+  enamoured                                      enamoured of (
+  fallen                                         fallen (
+  fishbowl                                       fishbowl/goldfish bowl
+  foot of the page                               foot of the page (
+  get kicks from                                 get kicks from (__
+  go off the rails                               go off the rails/track
+  go with the flow                               go with the flow/the stream
+  have someone by the balls                      have someone by the balls (
+  hit the ceiling                                hit the ceiling/the roof
+  indebted                                       indebted to
+  kick your                                      kick your heels
+  lark                                           lark around/lark about
+  lunch break                                    lunch break (__
+  masquerade                                     masquerade as
+  near to my heart                               near to my heart (
+  neck and neck                                  neck and neck/neck-a-neck
+  nerves of iron                                 nerves of iron/steel
+  on the right lines                             on the right lines/on the right track
+  opalescent                                     opalescent (
+  pass judgement/comment                         pass judgement/comment (
+  pent                                           pent up
+  pick holes in                                  pick holes in (
+  pillar of                                      pillar of (
+  play your cards                                play your cards right
+  premier                                        premier (
+  prima                                          prima donna
+  pull yourself together                         pull yourself together (
+  put aside                                      put aside/put on one side
+  put in the shade                               put in the shade (
+  rank and file                                  rank and file/the ranks
+  remotely                                       remotely like
+  ring true                                      ring true (
+  rub up the wrong way                           rub up the wrong way (
+  schlock                                        schlock (
+  search                                         search for
+  shitty                                         shitty (
+  short-circuit                                  short-circuit (
+  skate                                          skate around
+  smarmy                                         smarmy (
+  squeaky-clean                                  squeaky-clean (
+  steal the show                                 steal the show/steal the scene
+  sterling                                       sterling (
+  stoke                                          stoke up
+  subservient                                    subservient to
+  swim with the tide                             swim with the tide/swim with the current
+  take the bull by the horns                     take the bull by the horns (
+  tip the scales                                 tip the scales/balance
+  up the creek                                   up the creek (without a paddle)
+  wear the trousers                              wear the trousers/wear the pants
+
+
+======================================================================
+CATEGORY: Guide picks one slash-alternative
+Count: 22
+
+The guide indexes one slash-alternative in isolation; the thesaurus stores the combined multi-alternative headword.  E.g. guide 'any road' → thesaurus 'anyway/any road'.
+
+  Guide form                                     Thesaurus form / note
+  ---------------------------------------------  ------------------------------
+  about-turn                                     u-turn/about-turn
+  any road                                       anyway/any road
+  battleground                                   battlefield/battleground
+  bring to light                                 come/bring to light
+  buckets                                        bucket-loads/buckets
+  cast in concrete                               set/cast in concrete
+  cast in stone                                  set/cast in stone
+  dirty swine                                    filthy/dirty swine
+  goldfish bowl                                  fishbowl/goldfish bowl
+  keep up with                                   keep up/keep up with
+  knock for six                                  hit/knock for six
+  line of least resistance                       the path of least resistance/line of least resistance
+  on the right track                             on the right lines/on the right track
+  put on one side                                put aside/put on one side
+  put out to pasture                             put out to grass/put out to pasture
+  slap on the back                               pat/slap on the back
+  steal the scene                                steal the show/steal the scene
+  swim with the current                          swim with the tide/swim with the current
+  the roof                                       hit the ceiling/the roof
+  throw light on                                 cast/shed/throw light on
+  up the creek without a paddle                  up the creek/up the creek without a paddle
+  wear the pants                                 wear the trousers/wear the pants
+
+
+======================================================================
+CATEGORY: Similar but different phrasing in thesaurus
+Count: 113
+
+The entry exists in the thesaurus but under a substantively different phrasing — word order, added parenthetical, or expanded repetition.  E.g. guide 'blow by blow account/description' → thesaurus 'blow by blow account/ blow by blow description'.
+
+  Guide form                                     Thesaurus form / note
+  ---------------------------------------------  ------------------------------
+  against the tide                               against the stream/tide
+  be overcome by                                 be behind
+  be taken with                                  be behind
+  bleed (dry/white)                              bleed
+  blow by blow account/description               blow
+  bounce off                                     bounce back
+  bring pressure (to bear) on                    bring
+  bring to bear                                  bring
+  callous                                        callous?
+  cast light on                                  cast
+  cesspit                                        cesspit, cesspool
+  come around/round                              come
+  come out (of the closet)                       come
+  come out of/go/crawl/retire into your shell    come
+  come to light                                  come
+  crabgras                                       crabgrass
+  curtain descends/falls on                      curtain-raiser
+  cut the ground from under their feet           cut
+  dice is cast                                   dice with death
+  dime a dozen                                   dimension
+  divorce … from                                 divorce yourself from
+  down market                                    down
+  down the hatch                                 down
+  face up to                                     face
+  fall to pieces/bits/apart                      fall
+  filthy swine                                   filthy
+  fool around/about                              fool
+  fritter (away)                                 fritter away
+  fuck around/about                              fuck around/fuck about
+  get change out of                              get
+  get you teeth into                             get
+  ghost of a chance/idea                         ghost
+  give a rest                                    give a free rein to
+  give … a rest                                  give a free rein to
+  go off the track                               go
+  go with the stream                             go
+  hawk-ey                                        hawk-eyed
+  hit for six                                    hit
+  hit the roof                                   hit
+  in advance                                     in a (flat) spin
+  in dire/difficult straits                      in a (flat) spin
+  in the driving/driver's seat                   in a (flat) spin
+  in the limelight                               in a (flat) spin
+  in the same/different league                   in a (flat) spin
+  in the short/long run                          in a (flat) spin
+  in the/out of the running                      in a (flat) spin
+  keep …together                                 keep ... for a rainy day
+  kill (off)                                     kill
+  knee-deep in                                   knee-deep
+  know your way about/around                     know the ropes/learn the ropes
+  lark around/about                              lark around/lark about
+  lay down law/rules                             lay a foundation
+  leave a bad/sour/unpleasant taste              leave
+  lie about/around                               lie
+  line up behind/with                            line
+  loaf around/about                              loaf around/loaf about
+  lose touch (with)                              lose
+  mess around/about                              mess around/mess about
+  nerves of steel                                nerves of iron/steel
+  new ball game                                  new blood
+  not care/not be worth a fig                    not a patch on
+  not to put too fine a point on it              not a patch on
+  oceans of                                      oceans
+  on all/full cylinders                          on
+  on the right lines/track                       on
+  pat on the back                                pat/slap on the back
+  path of least resistance                       path
+  piss around/about                              piss
+  plant ...on                                    plant
+  play your cards (right)                        play a game
+  profit margin                                  profit from
+  pump into                                      pump out
+  put a/the lid                                  put a brave face on
+  put out to grass/pasture                       put a brave face on
+  rack you brains                                rack your brains
+  raise (a smile/laugh)                          raise
+  reap benefits/rewards                          reap benefits/ reap rewards
+  rise (up)                                      rise
+  rope in/into                                   rope in
+  run into/up against                            run
+  running behind/ahead of                        running
+  sail close to/against the wind                 sail
+  set the scene for                              set
+  set the stage for                              set
+  set/put the wheels in motion                   set/put/get the record straight
+  shed light on                                  shed
+  shut ou                                        shut down
+  siphon (off)                                   siphon off
+  sit around (on your backside)                  sit
+  skinflin                                       skinflint
+  squeeze...(dry)                                squeeze...dry
+  steal the show/scene                           steal a march on
+  steer away from/clear of                       steer
+  stick your nose into                           stick
+  stretch int                                    stretch
+  string … along                                 string
+  sub                                            sub-
+  sweep (through)                                sweep aside
+  swim with the tide/current                     swim
+  take... down a peg                             take...with you
+  teeter on the edge/verge (of                   teeter on the edge/verge (of)
+  the  bare bones                                the ball's in your court
+  the cut and thrust                             the ball's in your court
+  thumbs up/down                                 thumbs down
+  tip the balance                                tip of the iceberg
+  turn round/around                              turn
+  up to your eyeballs in                         up
+  up to your neck in                             up
+  up to your neck/eyeballs in                    up
+  wake up (to)                                   wake up to
+  walk ove                                       walk a tightrope between
+  wear the trousers/pants                        wear
+  yoke (together                                 yoke
+
+
+======================================================================
+CATEGORY: Hyphenation / spacing variant
+Count: 7
+
+The entry exists but with a different hyphenation convention.  E.g. guide 'arm-candy' → thesaurus 'arm candy'.
+
+  Guide form                                     Thesaurus form / note
+  ---------------------------------------------  ------------------------------
+  arm-candy                                      arm candy
+  cock-pit                                       cockpit
+  couch potato                                   couch-potato
+  eye-candy                                      eye candy
+  hook-up                                        hook up
+  run up                                         run-up
+  souped up                                      souped-up
+
+
+======================================================================
+CATEGORY: Guide typo or garbled entry
+Count: 1
+
+The guide entry appears garbled or is a known typographic error.  E.g. 'amily jewels' for 'family jewels'.
+
+  Guide form                                     Thesaurus form / note
+  ---------------------------------------------  ------------------------------
+  amily jewels                                   
+
+
+======================================================================
+CATEGORY: Not found under any matching form
+Count: 65
+
+The entry could not be matched to any form in the extracted thesaurus.  This includes a small number of entries that do not appear in the thesaurus docx at all (possible guide errors or later removals).
+
+  Guide form                                     Thesaurus form / note
+  ---------------------------------------------  ------------------------------
+  all/along the way                              
+  arm/eye candy                                  
+  bang/beat the drum for                         
+  beyond/out of reach                            
+  bull's eye                                     
+  cesspool                                       
+  champ/chafe at the bit                         
+  charged/up                                     
+  clear/open the way for                         
+  clotted cream                                  
+  clutch/grasp at straws                         
+  column                                         
+  come/go with the territory                     
+  days/times gone by                             
+  drag/press/rope/frighten/talk into             
+  draw/pull in your horns                        
+  drily                                          
+  drown, drown out                               
+  drown, drown/out                               
+  flare, flare up                                
+  frighten/lock/talk out of                      
+  gain/lose ground                               
+  get...over                                     
+  get/find your bearings                         
+  get/pull/wriggle out of                        
+  go/run to seed                                 
+  hard/tough going                               
+  have/get your way                              
+  headhunter                                     
+  heartless daughter she was                     
+  high-flier                                     
+  in/out of the picture                          
+  infected                                       
+  keep/stay out of                               
+  know/learn the ropes                           
+  laden                                          
+  let/get off the hook                           
+  move/step up a gear                            
+  on/at hand                                     
+  path/ line of least resistance                 
+  pave/smooth/prepare the way for                
+  pick/get up steam                              
+  pig/piggy in the middle                        
+  poor/raw/bad deal                              
+  put/go through the mill                        
+  put/lay your cards on the table                
+  ranks                                          
+  reach/get to first base                        
+  retro--                                        
+  set/start/open up                              
+  shake/rock (to) the foundations                
+  shed/throw light on                            
+  shift/change gear                              
+  shy/steer/run away from                        
+  somber                                         
+  stick/put your oar in                          
+  streak/get/pull ahead                          
+  take/run its course                            
+  takes the biscuit                              
+  tea/lunch break                                
+  teach/show someone the ropes                   
+  throw/put...off the scent                      
+  thrust...upon                                  
+  turn/go belly up                               
+  turn/go sour                                   
