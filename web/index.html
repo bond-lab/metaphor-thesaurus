@@ -63,29 +63,32 @@ function queryStats() {
 
 // LIKE-based search — reliable across all sql.js builds; the table is small
 // enough that a full scan is imperceptibly fast.
+// Searches headword, source_lemma, literal_meaning, and metaphorical_meaning.
 function querySearch(term) {
   if (!term || term.trim().length < 2) return [];
   const pat = "%" + term.trim().replace(/[%_]/g, "") + "%";
   return q(`
-    SELECT e.id, e.headword, e.reversal_prefix, e.literal_meaning,
+    SELECT e.id, e.headword, e.source_lemma, e.reversal_prefix, e.literal_meaning,
            e.metaphorical_meaning, e.wc_metaphorical,
            t.name AS theme_name, t.id AS theme_id
     FROM entries e
     JOIN subsections s ON e.subsection_id = s.id
     JOIN themes t ON s.theme_id = t.id
     WHERE lower(e.headword)             LIKE lower(?)
+       OR lower(e.source_lemma)         LIKE lower(?)
        OR lower(e.literal_meaning)      LIKE lower(?)
        OR lower(e.metaphorical_meaning) LIKE lower(?)
     ORDER BY
       CASE WHEN lower(e.headword) LIKE lower(?) THEN 0 ELSE 1 END,
       e.headword COLLATE NOCASE
     LIMIT 300
-  `, [pat, pat, pat, pat]);
+  `, [pat, pat, pat, pat, pat]);
 }
+
 
 function queryEntryDetail(id) {
   const rows = q(`
-    SELECT e.id, e.headword, e.reversal_prefix, e.literal_meaning,
+    SELECT e.id, e.headword, e.source_lemma, e.reversal_prefix, e.literal_meaning,
            e.wc_literal, e.wc_metaphorical, e.metaphorical_meaning, e.example,
            s.heading AS subsection_heading,
            t.id AS theme_id, t.name AS theme_name,
@@ -186,6 +189,14 @@ function queryThemesForDomain(domain, role) {
     WHERE td.domain = ? AND td.role = ?
     GROUP BY t.id ORDER BY t.name
   `, [domain, role]);
+}
+
+// Strip the leading (___) placeholder from literal meanings when the
+// source lemma has been identified — it is redundant in the display.
+function stripPlaceholder(lit) {
+  if (!lit) return lit;
+  // Matches (_, (__,  (___, etc. at the very start of the parenthetical
+  return lit.replace(/^\(_{1,}\s*/, "(").replace(/\s*_{2,}\s*\)/, ")").trim();
 }
 
 // ── Tooltip ────────────────────────────────────────────────────────────────
@@ -358,9 +369,16 @@ function EntryDetail({ entry, showWordNet, onThemeClick, onDomainClick }) {
           <div>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
               Literal meaning
+              {entry.source_lemma && (
+                <span className="ml-2 font-normal normal-case text-gray-400">
+                  (of <span className="font-medium text-gray-600">{entry.source_lemma}</span>)
+                </span>
+              )}
             </div>
             <div className="text-gray-800">
-              {entry.literal_meaning}
+              {entry.source_lemma
+                ? stripPlaceholder(entry.literal_meaning)
+                : entry.literal_meaning}
               {entry.wc_literal && entry.wc_literal !== entry.wc_metaphorical && (
                 <span className="ml-1"><PosChip pos={entry.wc_literal} /></span>
               )}
@@ -405,8 +423,13 @@ function EntryDetail({ entry, showWordNet, onThemeClick, onDomainClick }) {
 
       {showWordNet && (
         <div data-testid="wn-section" className="border border-purple-200 rounded-lg overflow-hidden">
-          <div className="bg-purple-100 px-3 py-2 text-xs font-semibold text-purple-800 uppercase tracking-wide">
-            WordNet matches
+          <div className="bg-purple-100 px-3 py-2 text-xs font-semibold text-purple-800 uppercase tracking-wide flex items-center gap-2">
+            <span>WordNet matches</span>
+            {entry.source_lemma && (
+              <span className="font-normal normal-case text-purple-600">
+                · looked up as <em>{entry.source_lemma}</em>
+              </span>
+            )}
           </div>
           {wnLit || wnMeta ? (
             <div className="p-3 space-y-3">

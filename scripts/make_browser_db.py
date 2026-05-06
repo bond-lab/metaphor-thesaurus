@@ -45,6 +45,7 @@ CREATE TABLE entries (
     subsection_id        INTEGER NOT NULL REFERENCES subsections(id),
     lang                 TEXT NOT NULL DEFAULT 'en',
     headword             TEXT NOT NULL,
+    source_lemma         TEXT NOT NULL DEFAULT '',
     reversal_prefix      TEXT NOT NULL DEFAULT '',
     literal_meaning      TEXT NOT NULL DEFAULT '',
     wc_literal           TEXT NOT NULL DEFAULT '',
@@ -77,6 +78,7 @@ CREATE TABLE wn_matches (
 
 CREATE VIRTUAL TABLE entries_fts USING fts5(
     headword,
+    source_lemma,
     literal_meaning,
     metaphorical_meaning
 );
@@ -255,11 +257,12 @@ def build(thesaurus_path: Path, db_path: Path) -> None:
                 for entry in sub.get("entries", []):
                     entry_id += 1
                     method = entry.get("wn_method", "")
+                    hw  = entry.get("headword", "").strip()
+                    sl  = entry.get("source_lemma", "")
                     con.execute(
-                        "INSERT INTO entries VALUES (?, ?, 'en', ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO entries VALUES (?, ?, 'en', ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
-                            entry_id, sub_id,
-                            entry.get("headword", "").strip(),
+                            entry_id, sub_id, hw, sl,
                             entry.get("reversal_prefix", ""),
                             entry.get("literal_meaning", ""),
                             entry.get("word_class_literal", ""),
@@ -269,11 +272,10 @@ def build(thesaurus_path: Path, db_path: Path) -> None:
                         ),
                     )
                     con.execute(
-                        "INSERT INTO entries_fts(rowid, headword, literal_meaning,"
-                        " metaphorical_meaning) VALUES (?, ?, ?, ?)",
+                        "INSERT INTO entries_fts(rowid, headword, source_lemma,"
+                        " literal_meaning, metaphorical_meaning) VALUES (?, ?, ?, ?, ?)",
                         (
-                            entry_id,
-                            entry.get("headword", "").strip(),
+                            entry_id, hw, sl,
                             entry.get("literal_meaning", ""),
                             entry.get("metaphorical_meaning", ""),
                         ),

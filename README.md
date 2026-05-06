@@ -206,3 +206,53 @@ Each `wn_literal` / `wn_metaphorical` object:
 ### Word class abbreviations
 
 `adj` adjective · `adjphr` adjective phrase · `adv` adverb · `advphr` adverbial phrase · `art` article · `cl` clause · `excl` exclamation · `idi` idiom · `n` noun · `nplur` plural noun · `nphr` noun phrase · `pr` preposition · `pref` prefix · `prphr` prepositional phrase · `pt` particle · `v` verb · `verg` ergative verb · `vi` intransitive verb · `v-inf` infinitive · `virec` reciprocal verb · `vtref` reflexive verb · `vt` transitive verb · `prp` present participle · `pp` past participle
+
+---
+
+## Known issues
+
+### Compound headwords and WordNet matching
+
+Many entries are compound words or idioms whose metaphorical meaning derives from
+just one component — the *source lemma*.  For example, **lounge lizard** draws its
+metaphor from *lizard*, and **heart of gold** from *gold*.
+
+The pipeline detects the source lemma automatically for multi-word headwords that
+carry the `__` placeholder in their parenthetical literal meaning (e.g.
+`(___thick skinned reptile…)`).  In those cases:
+
+- The source lemma is stored in the `source_lemma` field and shown in the browser
+  alongside the entry.
+- WordNet synsets are looked up by the source lemma rather than the full compound,
+  giving more meaningful WN links.
+- The entry is indexed under both the compound headword and the source lemma, so
+  searching for *lizard* finds *lounge lizard*.
+
+**Closed-form compounds without spaces** (e.g. **snapdragon**, **firefly**,
+**deadline**) cannot be decomposed automatically because there is no whitespace
+boundary to guide the split.  The source lemma for these entries remains empty
+and their WordNet matching is attempted against the full compound (which typically
+yields no WN synsets).  These are tracked in `paper/lexis_coverage_report.txt`
+under the *Similar but different phrasing* category.
+
+### Lexis index coverage
+
+The guide's lexis index (~6,900 entries) is normalised for alphabetical lookup and
+differs from the thesaurus headwords in several systematic ways (leading articles
+stripped, shorter base forms used, one slash-alternative listed instead of the
+combined form).  Overall coverage is ~95 %.  The full breakdown by category is in
+`paper/lexis_coverage_report.txt` and `paper/lexis_coverage.tsv`.
+
+### Small number of entries with empty metaphorical meaning
+
+Ten entries in the source docx have no metaphorical meaning run at all; the theme
+label carries the metaphorical sense implicitly (e.g. **place**, **post** in
+JOB IS POSITION; **shank** in HUMAN IS IMPLEMENT/UTENSIL).
+
+### Remaining unresolved relationship names
+
+After fuzzy normalisation, ~87 relationship cross-references in the thesaurus do
+not resolve to a known theme name (out of ~1,100 total).  Most arise from
+divergences between the guide's theme list and the actual headings in the docx
+(e.g. themes listed in the guide's index that do not appear as standalone bold
+headings in the printed thesaurus).

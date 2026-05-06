@@ -96,6 +96,60 @@ def is_all_caps(text: str) -> bool:
     return bool(letters) and all(c.isupper() for c in letters)
 
 
+# Function words that are unlikely to be the metaphor source when they appear
+# as the terminal word of a compound headword.
+_TERMINAL_STOP = frozenset({
+    "a", "an", "the", "of", "in", "at", "to", "for", "with",
+    "by", "from", "as", "into", "onto", "about", "like",
+})
+
+
+def source_lemma(headword: str, literal_meaning: str) -> str:
+    """Identify the WN lookup lemma for a compound-word headword.
+
+    For idioms and compound nouns the literal meaning is defined by just one
+    component (the *source*), marked with ``__`` in the parenthetical gloss.
+    For example:
+
+      'lounge lizard'  (___thick skinned reptile …)  → 'lizard'
+      'heart of gold'  (__the metal Au)               → 'gold'
+      'a stream of'    (__small river__)               → 'stream'
+
+    Rules:
+    * Only applied to multi-word headwords that have a ``__`` placeholder.
+    * Trailing ``__`` inside the parenthetical (``(__…__)``) signals that
+      the source word is *before* the terminal word of the headword
+      (e.g. ``a stream of`` → ``stream``).
+    * Otherwise the source is the last non-function-word of the headword.
+
+    Returns an empty string when the pattern does not apply.
+    """
+    words = headword.split()
+    if len(words) < 2:
+        return ""
+    lit = literal_meaning.strip()
+    if not re.search(r"_{2,}", lit):
+        return ""
+
+    has_trailing = bool(re.search(r"_{2,}\s*\)", lit))
+
+    if has_trailing:
+        # Source is the last content word before the terminal word.
+        candidates = words[:-1]  # exclude the last (terminal function) word
+    else:
+        candidates = words
+
+    for word in reversed(candidates):
+        clean = word.strip("()[]\"'.,/").lower()
+        if clean and clean not in _TERMINAL_STOP and len(clean) > 1:
+            return word.strip("()[]\"'.,")
+
+    # Fallback: second-to-last word for trailing-__ case, else last word.
+    if has_trailing:
+        return words[-2].strip("()[]\"'.,") if len(words) >= 2 else ""
+    return words[-1].strip("()[]\"'.,")  # even if it's a function word
+
+
 def run_is_bold(run) -> bool:
     return bool(run.bold)
 
@@ -309,6 +363,10 @@ def parse_entry(para) -> dict:
 
     entry["literal_meaning"], entry["word_class_literal"], entry["word_class_metaphorical"] = \
         _parse_literal_and_wordclass(plain_text)
+
+    entry["source_lemma"] = source_lemma(
+        entry["headword"], entry["literal_meaning"]
+    )
 
     return entry
 

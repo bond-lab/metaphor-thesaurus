@@ -422,7 +422,10 @@ def collect_texts(data: dict, limit: int = 0) -> tuple[list[str], dict[str, list
                     add(entry.get("metaphorical_meaning", "").strip())
 
                     if hw not in synsets_by_hw:
-                        synsets_by_hw[hw] = get_synsets(hw)
+                        sl = entry.get("source_lemma", "").strip()
+                        synsets_by_hw[hw] = get_synsets(hw) or (
+                            get_synsets(sl) if sl else []
+                        )
                     for ss in synsets_by_hw[hw]:
                         add(synset_text(ss))
 
@@ -569,7 +572,8 @@ def main() -> None:
                         hw = re.sub(r"[(\s]+$", "", entry["headword"]).strip()
                         if hw.lower() != args.headword.lower():
                             continue
-                        synsets = get_synsets(hw)
+                        sl = entry.get("source_lemma", "").strip()
+                        synsets = get_synsets(hw) or (get_synsets(sl) if sl else [])
                         r = match_entry(entry, theme["name"], synsets,
                                         args.alpha, scorer, args.method)
                         print_result(r)
