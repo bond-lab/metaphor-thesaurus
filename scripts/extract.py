@@ -43,6 +43,7 @@ WORD_CLASSES = {
     "vphr",    # verb phrase
     "conj",    # conjunction
     "advcl",   # adverbial clause
+    "vt-inf",  # transitive verb in infinitive form
 }
 
 # A single WC token, e.g. "n", "idi(vt+adv+adv)", "(n)", "vt-pp"
@@ -105,6 +106,22 @@ def run_is_italic(run) -> bool:
 
 def run_is_underline(run) -> bool:
     return bool(run.underline)
+
+
+def run_display_text(run) -> tuple[bool, str]:
+    """Return (is_caps, display_text) for a run.
+
+    Metaphorical meanings are sometimes stored as lowercase text with the
+    Word ``font.all_caps`` property set to True (rendered as all-caps in the
+    printed document but stored in lowercase).  This helper detects that case
+    and returns the uppercase form so the extraction matches the visual intent.
+    """
+    text = run.text
+    font_caps = bool(run.font.all_caps)
+    text_caps = is_all_caps(text)
+    if font_caps and not text_caps:
+        return True, text.upper()
+    return text_caps, text
 
 
 def para_is_centered(para) -> bool:
@@ -244,10 +261,10 @@ def parse_entry(para) -> dict:
 
     segments = []
     for run in para.runs:
-        text = run.text
-        if not text:
+        if not run.text:
             continue
-        segments.append((run_is_bold(run), run_is_italic(run), is_all_caps(text), text))
+        is_caps, display_text = run_display_text(run)
+        segments.append((run_is_bold(run), run_is_italic(run), is_caps, display_text))
 
     if not segments:
         return entry

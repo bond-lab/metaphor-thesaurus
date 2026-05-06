@@ -135,6 +135,57 @@ def _resplit_relationship(sym: str, theme_text: str) -> list[tuple[str, str]]:
     return results or [(sym, text.strip())]
 
 
+# Inverse relationship symbols (used to synthesise back-links).
+_INVERSE_SYM: dict[str, str] = {
+    "<": ">", ">": "<",
+    "^": "v", "v": "^",
+    "#": "#", ">>": ">>", "⇔": "⇔",
+}
+
+
+def _normalise_for_matching(name: str) -> str:
+    """Normalise a theme name for fuzzy resolution of relationship references.
+
+    Covers the most common divergences found in the thesaurus source:
+    - Spaces around parentheses and slashes
+    - British/American spelling (ORGANISATION vs ORGANIZATION)
+    - FORWARDS vs FORWARD
+    """
+    name = re.sub(r"\s+", " ", name.strip())
+    name = re.sub(r"\s*\(\s*", "(", name)
+    name = re.sub(r"\s*\)\s*", ")", name)
+    name = re.sub(r"\s*/\s*", "/", name)
+    name = name.replace("FORWARDS", "FORWARD")
+    name = name.replace("ORGANISATION", "ORGANIZATION")
+    return name
+
+
+def _resolve_theme_name(name: str, norm_map: dict[str, str]) -> str:
+    """Best-effort resolution of a relationship target name to a real theme name.
+
+    Tries in order:
+      1. Exact match via normalised key
+      2. name is a strict prefix of one theme name  (e.g. 'HUMAN IS REPTILE'
+         → 'HUMAN IS REPTILE/AMPHIBIAN')
+      3. One theme name is a strict prefix of name  (e.g. 'CERTAINTY/RELIABILITY
+         IS SOLIDITY' → 'CERTAINTY/RELIABILITY IS SOLIDITY/FIRMNESS')
+
+    Returns the canonical theme name, or the original string if unresolved.
+    """
+    norm = _normalise_for_matching(name)
+    if norm in norm_map:
+        return norm_map[norm]
+    # Prefix: name + "/" starts a theme
+    candidates = [v for k, v in norm_map.items() if k.startswith(norm + "/")]
+    if len(candidates) == 1:
+        return candidates[0]
+    # Reverse prefix: a theme is a strict prefix of name
+    candidates = [v for k, v in norm_map.items() if norm.startswith(k + "/")]
+    if len(candidates) == 1:
+        return candidates[0]
+    return name   # unresolved — keep original for display
+
+
 def _extract_domains(theme_name: str) -> tuple[list[str], list[str]]:
     parts = re.split(r"\bIS\b", theme_name, maxsplit=1)
     if len(parts) != 2:
@@ -151,6 +202,16 @@ def build(thesaurus_path: Path, db_path: Path) -> None:
     db_path.unlink(missing_ok=True)
     con = sqlite3.connect(db_path)
     con.executescript(SCHEMA)
+
+    # Pre-collect all theme names for fuzzy relationship resolution.
+    all_theme_names: set[str] = {
+        t["name"]
+        for p in data["parts"]
+        for t in p["themes"]
+    }
+    norm_map: dict[str, str] = {
+        _normalise_for_matching(n): n for n in all_theme_names
+    }
 
     part_id = theme_id = sub_id = entry_id = wn_id = 0
 
@@ -176,10 +237,11 @@ def build(thesaurus_path: Path, db_path: Path) -> None:
                 )
             for rel in theme.get("relationships", []):
                 for r_sym, r_theme in _resplit_relationship(rel["symbol"], rel["theme"]):
+                    resolved = _resolve_theme_name(r_theme, norm_map)
                     con.execute(
                         "INSERT INTO relationships(theme_id, symbol, related_theme)"
                         " VALUES (?, ?, ?)",
-                        (theme_id, r_sym, r_theme),
+                        (theme_id, r_sym, resolved),
                     )
 
             for pos, sub in enumerate(theme.get("subsections", [])):
@@ -239,12 +301,58 @@ def build(thesaurus_path: Path, db_path: Path) -> None:
                             ),
                         )
 
+    # Add missing inverse relationships so the hierarchy is navigable in
+    # both directions (e.g. HUMAN IS ANIMAL →v→ HUMAN IS BIRD gives
+    # HUMAN IS BIRD →^→ HUMAN IS ANIMAL automatically).
+    inv_added = _add_inverse_relationships(con)
+
     con.commit()
     con.close()
     print(
         f"Built {db_path}: {part_id} parts, {theme_id} themes,"
-        f" {sub_id} subsections, {entry_id} entries, {wn_id} WN matches"
+        f" {sub_id} subsections, {entry_id} entries, {wn_id} WN matches,"
+        f" {inv_added} inferred inverse relationships"
     )
+
+
+def _add_inverse_relationships(con: "sqlite3.Connection") -> int:
+    """Infer and insert missing inverse relationships.
+
+    For every (A, sym, B) in the relationships table where B is a known theme,
+    add (B, inv(sym), A) if that row does not already exist.  This ensures the
+    hierarchy is navigable in both directions.
+    """
+    theme_id_map: dict[str, int] = dict(
+        con.execute("SELECT name, id FROM themes").fetchall()
+    )
+    theme_name_map: dict[int, str] = {v: k for k, v in theme_id_map.items()}
+
+    rels = con.execute(
+        "SELECT r.theme_id, r.symbol, r.related_theme FROM relationships r"
+    ).fetchall()
+
+    added = 0
+    for theme_id, sym, related in rels:
+        inv_sym = _INVERSE_SYM.get(sym)
+        if not inv_sym:
+            continue
+        target_id = theme_id_map.get(related)
+        if not target_id:
+            continue   # unresolved reference — skip
+        source_name = theme_name_map[theme_id]
+        exists = con.execute(
+            "SELECT 1 FROM relationships"
+            " WHERE theme_id=? AND symbol=? AND related_theme=?",
+            (target_id, inv_sym, source_name),
+        ).fetchone()
+        if not exists:
+            con.execute(
+                "INSERT INTO relationships(theme_id, symbol, related_theme)"
+                " VALUES (?, ?, ?)",
+                (target_id, inv_sym, source_name),
+            )
+            added += 1
+    return added
 
 
 def main() -> None:

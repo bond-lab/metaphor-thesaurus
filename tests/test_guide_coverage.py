@@ -148,7 +148,10 @@ def test_all_entry_wcs_are_known():
         "pr…",       # pr + ellipsis placeholder
         "'of'",      # quoted particle in idiom WC template
         "'with",     # quoted particle in idiom WC template
+        "'to'",      # quoted particle in vi(+'to') WC template
         "nphr, vi",  # comma-separated pair not split by the WC parser
+        "pphr",      # typo for prphr in idi(pt+pphr+adverb)
+        "adverb",    # full English word used instead of abbreviation 'adv'
     }
 
     entries = _thesaurus_entries()
@@ -202,6 +205,45 @@ def test_bank_on_wc_correct():
     assert e["word_class_metaphorical"] == "vt+pr", \
         f"bank on wc_metaphorical: {e['word_class_metaphorical']!r}"
     assert "(n)|" not in e["literal_meaning"], "(n)| still stranded in bank on literal_meaning"
+
+
+@requires_thesaurus
+def test_font_all_caps_metaphorical_meaning():
+    """Metaphorical meanings stored as lowercase text with font.all_caps=True
+    must be extracted as uppercase, not swallowed into literal_meaning."""
+    entries = _thesaurus_entries()
+    by_hw = {e["headword"]: e for e in entries}
+
+    # SERIOUSNESS/IMPORTANCE IS WEIGHT — metaphorical meanings were entirely
+    # missing before the font.all_caps fix (2000+ entries affected)
+    heavy = next(
+        (e for e in entries
+         if e["headword"] == "heavy" and "weighing" in e.get("literal_meaning", "")),
+        None,
+    )
+    assert heavy is not None, "heavy (weighing a lot) not found"
+    assert heavy["metaphorical_meaning"] == "SERIOUS IN CONTENT", (
+        f"heavy meta wrong: {heavy['metaphorical_meaning']!r}"
+    )
+    assert "serious" not in heavy["literal_meaning"].lower(), (
+        "metaphorical meaning leaked into literal_meaning for 'heavy'"
+    )
+
+    # snapdragon — font.all_caps on an unusual second-literal paragraph
+    snap = next(
+        (e for e in entries if e["headword"] == "snapdragon"), None
+    )
+    assert snap is not None, "snapdragon not found"
+    assert snap["metaphorical_meaning"] != "", (
+        "snapdragon has empty metaphorical_meaning — font.all_caps fix may be broken"
+    )
+
+    # Overall: very few entries should now have empty metaphorical_meaning
+    n_empty = sum(1 for e in entries if not e["metaphorical_meaning"])
+    assert n_empty <= 15, (
+        f"Too many entries with empty metaphorical_meaning: {n_empty} "
+        "(expected ≤15 genuine blanks)"
+    )
 
 
 @requires_thesaurus
