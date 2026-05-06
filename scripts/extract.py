@@ -91,6 +91,26 @@ THEME_FIXUPS = {
 }
 
 
+def _strip_placeholder(lit: str) -> str:
+    """Remove ``__`` placeholder markers and their surrounding parentheses.
+
+    Called only when a ``source_lemma`` has been identified, so the caller
+    guarantees the string contains ``_{2,}``.
+
+    Examples::
+
+        '(___thick skinned reptile…)'  → 'thick skinned reptile…'
+        '(__small river__)'            → 'small river'
+        '(be suspended__)'             → 'be suspended'
+    """
+    s = lit.strip()
+    if s.startswith("(") and s.endswith(")"):
+        s = s[1:-1]
+    s = re.sub(r"^_{2,}\s*", "", s)   # strip leading __
+    s = re.sub(r"\s*_{2,}$", "", s)   # strip trailing __
+    return s.strip()
+
+
 def is_all_caps(text: str) -> bool:
     letters = [c for c in text if c.isalpha()]
     return bool(letters) and all(c.isupper() for c in letters)
@@ -367,6 +387,8 @@ def parse_entry(para) -> dict:
     entry["source_lemma"] = source_lemma(
         entry["headword"], entry["literal_meaning"]
     )
+    if entry["source_lemma"]:
+        entry["literal_meaning"] = _strip_placeholder(entry["literal_meaning"])
 
     return entry
 

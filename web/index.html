@@ -191,14 +191,6 @@ function queryThemesForDomain(domain, role) {
   `, [domain, role]);
 }
 
-// Strip the leading (___) placeholder from literal meanings when the
-// source lemma has been identified — it is redundant in the display.
-function stripPlaceholder(lit) {
-  if (!lit) return lit;
-  // Matches (_, (__,  (___, etc. at the very start of the parenthetical
-  return lit.replace(/^\(_{1,}\s*/, "(").replace(/\s*_{2,}\s*\)/, ")").trim();
-}
-
 // ── Tooltip ────────────────────────────────────────────────────────────────
 // Wraps any element with a hover tooltip.  All abbreviations in the UI that
 // have an expanded meaning should be wrapped with this component.
@@ -376,9 +368,7 @@ function EntryDetail({ entry, showWordNet, onThemeClick, onDomainClick }) {
               )}
             </div>
             <div className="text-gray-800">
-              {entry.source_lemma
-                ? stripPlaceholder(entry.literal_meaning)
-                : entry.literal_meaning}
+              {entry.literal_meaning}
               {entry.wc_literal && entry.wc_literal !== entry.wc_metaphorical && (
                 <span className="ml-1"><PosChip pos={entry.wc_literal} /></span>
               )}
