@@ -1,0 +1,653 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+}
+
+\title{Linking a Conceptual Metaphor Thesaurus to WordNet\\
+       via Definition Similarity and Hypernym Chain Matching}
+
+\author{Francis Bond \and [co-authors]}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We describe an automatic method for linking the entries of a large
+English conceptual metaphor thesaurus to senses in the Open Multilingual
+Wordnet \citep{bond-foster-2013-linking}.
+Each thesaurus entry carries both a literal meaning and a metaphorical
+meaning, together with the conceptual metaphor theme (e.g.\
+\textsc{colour is mineral}) that situates the entry in the
+\citealt{lakoff-johnson-1980} tradition.
+We exploit this structure with two complementary scoring signals:
+(i)~\emph{definition similarity}, computed either as Jaccard overlap on
+content words or as cosine similarity of dense embeddings produced by a
+locally hosted neural encoder (\texttt{embeddinggemma}); and
+(ii)~\emph{hypernym chain matching}, which walks the WordNet hypernym
+closure of each candidate synset and checks whether the \textsc{source}
+or \textsc{target} domain keywords from the metaphor theme appear among
+the ancestor lemmas.
+For each entry we independently select the best-scoring sense for the
+literal meaning and for the metaphorical meaning.
+We present a running example (\emph{sapphire} in \textsc{colour is mineral}),
+report preliminary results over the full thesaurus of 8,747~entries, and
+discuss threshold selection and directions for refinement.
+\end{abstract}
+
+%% -------------------------------------------------------------------------
+\section{Introduction}
+\label{sec:intro}
+
+Conceptual Metaphor Theory \citep{lakoff-johnson-1980} holds that
+abstract concepts are systematically understood in terms of more concrete
+domains through cross-domain mappings.
+A classic example is \textsc{argument is war}, where reasoning about
+arguments borrows vocabulary from the domain of warfare
+(\emph{attack}, \emph{defend}, \emph{shoot down}).
+Large manually curated resources that catalogue such mappings offer a
+valuable window into the systematic nature of metaphorical language, but
+they remain largely disconnected from the formal lexical-semantic
+infrastructure of wordnets.
+
+The thesaurus of \citet{hcp78} (hereafter \textsc{MetThes}) provides an
+extensive lexical catalogue of English conceptual metaphors.
+Each entry pairs a headword (a lexical item used metaphorically) with a
+short gloss of its literal meaning, a statement of its metaphorical
+meaning, and an illustrative sentence, all situated under a named
+conceptual metaphor theme in the form \textsc{target is source}
+(e.g.\ \textsc{quality is money/wealth}).
+Connecting \textsc{MetThes} entries to WordNet senses would:
+\begin{itemize}
+  \item ground the literal meanings in a well-studied ontological hierarchy;
+  \item make the source and target conceptual domains navigable via
+        hypernym chains; and
+  \item enable downstream lexical-semantic analyses (e.g.\ polysemy
+        profiling, cross-lingual projection) that rely on synset identifiers.
+\end{itemize}
+
+In this paper we describe a fully automatic pipeline that, for each entry,
+selects the most plausible WordNet sense for the literal meaning and a
+(typically different) sense for the metaphorical meaning, combining
+definition-level text similarity with ontological signal from the
+hypernym graph.
+
+%% -------------------------------------------------------------------------
+\section{Resource Description}
+\label{sec:resource}
+
+\subsection{The Metaphor Thesaurus}
+
+\textsc{MetThes} \citep{hcp78} is organised hierarchically into six
+thematic parts (Table~\ref{tab:parts}), 339~conceptual metaphor themes,
+and 8,747~entries across 6,880~distinct headwords.
+
+\begin{table}[ht]
+\centering
+\caption{The six parts of \textsc{MetThes} and their entry counts.}
+\label{tab:parts}
+\begin{tabular}{llr}
+\toprule
+Part & Title & Entries \\
+\midrule
+I   & Values, Qualities and Quantities          & 1,430 \\
+II  & Emotions, Experiences and Relationships   & 1,280 \\
+III & Thinking \& Communicating                 & 1,896 \\
+IV  & Activities, Processes, Movement and Time  & 2,381 \\
+V   & Humans, Society, Animals and Senses       & 1,391 \\
+VI  & Things \& Substances                      &   369 \\
+\midrule
+    & \textbf{Total}                            & \textbf{8,747} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Each theme is named in the form \textsc{target is source} (or
+\textsc{target is source\textsubscript{1}/source\textsubscript{2}} for
+multiple sources), yielding 259~distinct target domains and 298~distinct
+source domains.
+Entries within a theme are grouped into subsections with underlined
+headings that provide more specific characterisations of the mapping.
+
+A single entry contains the following fields:
+
+\begin{description}
+  \item[headword] The lexical item used metaphorically, e.g.\ \emph{sapphire}.
+  \item[literal\_meaning] A short gloss of the word's literal sense,
+    e.g.\ \emph{transparent bright blue precious stone}.
+  \item[word\_class] Part of speech in literal and metaphorical use,
+    drawn from a 22-tag inventory (\texttt{n}, \texttt{adj}, \texttt{v},
+    \texttt{idi}, \ldots).
+  \item[metaphorical\_meaning] The abstract concept the headword
+    denotes in the metaphorical usage, written in small capitals,
+    e.g.\ \textsc{bright colour}.
+  \item[example] An illustrative sentence, e.g.\ \emph{she has sapphire
+    blue eyes}.
+\end{description}
+
+\subsection{WordNet and the Open Multilingual Wordnet}
+
+We use Princeton WordNet~3.1 as distributed via the Open Multilingual
+Wordnet~2.0 (OMW\,2.0; \citealt{bond-foster-2013-linking}), accessed
+through the \texttt{wn}~1.0 Python library.
+OMW\,2.0 provides synset identifiers of the form
+\texttt{omw-en-\textit{offset}-\textit{pos}}, together with definitions,
+usage examples, lemmas, and hypernym/hyponym relations.
+The English portion covers nouns (\texttt{n}), verbs (\texttt{v}),
+adjectives (\texttt{a} and satellite adjectives \texttt{s}, merged to \texttt{a}), and adverbs (\texttt{r}).
+
+%% -------------------------------------------------------------------------
+\section{Method}
+\label{sec:method}
+
+For each thesaurus entry we retrieve all WordNet synsets whose lemmas
+include the headword, regardless of part of speech.
+We do not filter by POS at retrieval time because the POS recorded in the
+thesaurus reflects the word's \emph{metaphorical} usage, which may differ
+from the POS of its dominant literal WordNet senses (e.g.\ \emph{sapphire}
+is tagged \texttt{adj} in the thesaurus because of the attributive use
+\emph{sapphire blue}, yet its relevant literal senses are nouns).
+Each candidate synset is then scored independently against the literal
+meaning and the metaphorical meaning using two complementary signals.
+
+\subsection{Definition Similarity}
+\label{subsec:defsim}
+
+We combine the synset definition and any usage examples into a single
+string $d_s$ and compare it to the query string $q$ (the literal or
+metaphorical meaning).
+
+\paragraph{Jaccard overlap (baseline).}
+Both strings are lowercased, tokenised on word boundaries, and filtered
+against a 22-word stoplist.
+The similarity is the Jaccard coefficient of the resulting content-word sets:
+\begin{equation}
+  \mathrm{sim}_{\mathrm{Jac}}(q, d_s)
+    = \frac{|\mathit{tok}(q) \cap \mathit{tok}(d_s)|}
+           {|\mathit{tok}(q) \cup \mathit{tok}(d_s)|}.
+\end{equation}
+This is fast and fully interpretable but fails when synonymous words are
+used (e.g.\ \textsc{bright colour} vs.\ \emph{a light shade of blue}).
+
+\paragraph{Embedding cosine similarity.}
+To capture semantic equivalence beyond surface overlap we encode both
+strings and compute cosine similarity:
+\begin{equation}
+  \mathrm{sim}_{\mathrm{emb}}(q, d_s)
+    = \frac{\mathbf{e}_q \cdot \mathbf{e}_s}
+           {\|\mathbf{e}_q\|\,\|\mathbf{e}_s\|},
+\end{equation}
+where $\mathbf{e}_q$ and $\mathbf{e}_s$ are the respective embedding vectors.
+We support two encoders: \texttt{embeddinggemma} (768-dimensional, served
+locally via Ollama) and \texttt{sup-simcse-roberta-large}~\cite{gao2021simcse}
+(1024-dimensional, loaded via \texttt{sentence-transformers}), referred to as
+SimCSE.
+SimCSE is trained with supervised contrastive learning on natural language
+inference data, making its representations sensitive to fine-grained meaning
+differences — an advantage for distinguishing near-synonymous WordNet senses.
+
+\paragraph{Batch encoding.}
+All unique strings to be encoded (synset texts, literal meanings, and
+metaphorical meanings across the entire thesaurus) are collected in a
+first pass and sent to Ollama in batches of 64.
+Results are persisted to a local cache keyed by model name and text, so
+subsequent runs only encode new strings.
+For the full thesaurus this amounts to approximately 31,600~unique texts
+spanning roughly 21,950~synsets across 6,880~headwords.
+
+\subsection{Hypernym Chain Matching}
+\label{subsec:hypernym}
+
+The metaphor theme name encodes the conceptual mapping directly.
+For a theme of the form \textsc{target is source} we define:
+\begin{itemize}
+  \item \textbf{source domains} — the words to the right of \textsc{is},
+    e.g.\ \{MINERAL\} for \textsc{colour is mineral};
+  \item \textbf{target domains} — the words to the left of \textsc{is},
+    e.g.\ \{COLOUR\} for \textsc{colour is mineral}.
+\end{itemize}
+Multiple domains separated by ``/'' are treated as a list (all must appear
+for a full score).
+
+For each candidate synset $s$ we perform a breadth-first search (BFS)
+over the full hypernym closure (up to 300~visited synsets) and record the
+\emph{first} (most specific) ancestor synset whose lemmas contain a
+domain keyword.
+The hypernym score is the fraction of domain keywords matched:
+\begin{equation}
+  h(s, D) = \frac{|\{d \in D \mid \exists\,\text{ancestor of }s
+                   \text{ with lemma } \supseteq d\}|}{|D|}.
+\end{equation}
+Crucially, we record the matching ancestor synset identifier and definition,
+so the result carries a grounded annotation such as:
+\begin{center}
+  \texttt{MINERAL} $\to$ \texttt{omw-en-14662574-n}
+  (\emph{solid homogeneous inorganic substances \ldots}).
+\end{center}
+The hypernym signal is applied asymmetrically:
+\begin{itemize}
+  \item the \textbf{literal sense} is matched against the
+        \textbf{source domains}
+        (the word denotes something \emph{in} the source domain literally);
+  \item the \textbf{metaphorical sense} is matched against the
+        \textbf{target domains}
+        (the word is used to talk about something \emph{in} the target domain
+        metaphorically).
+\end{itemize}
+
+\subsection{Source Domain Taxonomy}
+\label{subsec:domainmap}
+
+The hypernym chain matching produces, for each entry, a record of which
+ancestor synset triggered the domain match (e.g.\ MINERAL $\to$
+\texttt{omw-en-14662574-n}).
+Aggregating these records across all entries yields a \emph{source domain
+map}: a mapping from each source domain keyword to the canonical WordNet
+synset(s) that best represent it.
+
+We build this map as follows.
+For each source domain $D$ we collect all synsets that were reached via
+hypernym matching, count how many entries triggered each synset, and group
+them by WordNet part of speech.
+Within each POS group we retain synsets matched at least twice (the
+\texttt{--min-count} threshold) and treat each qualifying synset as a
+distinct canonical representative of the domain in that POS.
+Domains with a single canonical synset are represented as a leaf node;
+domains with multiple canonical synsets are represented as a grouping node
+with labelled children (e.g.\ \textsc{bird-1} through \textsc{bird-5}
+for the five bird-order synsets identified for the domain \textsc{bird}).
+
+The resulting taxonomy is stored as a flat TOML file in which every entry
+carries a \texttt{name}, \texttt{pos}, \texttt{synset\_id}, \texttt{hypernym}
+(the parent domain name), and \texttt{definition}.
+Four virtual root nodes (\textsc{n\_top}, \textsc{v\_top}, \textsc{a\_top},
+\textsc{r\_top}) serve as POS-level anchors.
+
+\paragraph{Intra-domain WordNet ancestry.}
+We further enrich the taxonomy by checking whether any single-synset
+domain's canonical synset is a WordNet hyponym of another domain's synset.
+When such a relationship holds, the more specific domain is promoted under
+the broader one (e.g.\ \textsc{waterbird} $\to$ \textsc{bird}).
+Of the 213 source domains with hypernym matches, 92 had their parent
+updated in this way, producing a coherent shallow ontology of source domains.
+
+\paragraph{Target domain map.}
+We apply the same procedure to the metaphorical role, collecting hypernym-match
+evidence from \texttt{wn\_metaphorical} scores to build a parallel
+\emph{target} domain map.
+The target map yields 128 domains (186 synset-bearing entries, 21 grouping nodes,
+74 ancestry promotions), substantially fewer than the source map because
+target domains in the thesaurus are drawn from a smaller lexical range
+(abstract concepts such as \textsc{love}, \textsc{time}, \textsc{society}).
+
+\paragraph{Combined domain map.}
+We also produce a \emph{combined} map by summing evidence across both roles
+before applying the frequency threshold.
+This gives 325 domains (595 synset-bearing entries, 75 grouping nodes,
+218 ancestry promotions) and is the most comprehensive taxonomy of the
+concepts covered by the thesaurus.
+
+\paragraph{Source vs target synset divergence.}
+Of the 213 source and 128 target domains, only 16 names appear in both maps.
+Of these, 4 have identical canonical synsets in both roles
+(\textsc{animal}, \textsc{building}, \textsc{human}, \textsc{money}),
+while 12 diverge.
+The divergences reveal genuine polysemy: the same domain word attracts
+different senses depending on whether it anchors a literal or a metaphorical
+meaning.
+For example, \textsc{food} maps to \textit{``any substance that can be metabolized''}
+as a source domain but to \textit{``a substance that can be used or prepared as food''}
+as a target domain; \textsc{race} maps to \textit{``a contest of speed''} (source)
+versus \textit{``people who are believed to belong to a race''} (target);
+and \textsc{plant} resolves to a biological cell unit (source) versus a woody
+plant (target).
+This pattern — source roles attracting the more general/process sense and
+target roles attracting the more prototypical/object sense — is consistent with
+the structure of conceptual metaphor, where abstract targets are understood
+through concrete, well-delineated source concepts.
+
+\subsection{Combined Score and Sense Selection}
+\label{subsec:combined}
+
+The two signals are combined with a weighting parameter $\alpha \in [0,1]$:
+\begin{equation}
+  \mathrm{score}(s, q, D)
+    = \alpha \cdot \mathrm{sim}(q, d_s)
+    + (1 - \alpha) \cdot h(s, D),
+\end{equation}
+where $\mathrm{sim}$ is either $\mathrm{sim}_{\mathrm{Jac}}$ or
+$\mathrm{sim}_{\mathrm{emb}}$.
+We use $\alpha = 0.5$ throughout, giving equal weight to the two signals.
+The best-scoring synset is selected independently for the literal and
+metaphorical meanings, so the same entry may (and often will) receive
+different synsets for each.
+
+%% -------------------------------------------------------------------------
+\section{Running Example: \emph{Sapphire}}
+\label{sec:example}
+
+Table~\ref{tab:sapphire} illustrates the scoring for the entry
+\emph{sapphire} under the theme \textsc{colour is mineral}.
+The entry's literal meaning is \emph{transparent bright blue precious stone}
+and its metaphorical meaning is \textsc{bright colour}; the source domain
+is \{MINERAL\} and the target domain is \{COLOUR\}.
+
+\begin{table}[ht]
+\centering
+\caption{Scores for all four \emph{sapphire} synsets under both methods
+         ($\alpha=0.5$). Winning senses for each meaning are bold.}
+\label{tab:sapphire}
+\small
+\begin{tabular}{llrrrr|rrrr}
+\toprule
+& & \multicolumn{4}{c|}{Literal (source: MINERAL)}
+  & \multicolumn{4}{c}{Metaphorical (target: COLOUR)} \\
+\cmidrule(lr){3-6}\cmidrule(lr){7-10}
+Synset & Definition (abridged) & \multicolumn{2}{c}{Jac} & \multicolumn{2}{c|}{Emb}
+                               & \multicolumn{2}{c}{Jac} & \multicolumn{2}{c}{Emb} \\
+& & $\mathrm{sim}$ & total & $\mathrm{sim}$ & total
+  & $\mathrm{sim}$ & total & $\mathrm{sim}$ & total \\
+\midrule
+\textbf{15019483-n} & precious transparent stone \ldots  & .444 & \textbf{.722} & .749 & \textbf{.875} & .000 & .000 & .363 & .182 \\
+13372812-n & cut and polished sapphire \ldots           & .167 & .083           & .635 & .317           & .000 & .000 & .307 & .153 \\
+\textbf{04969242-n} & a light shade of blue               & .143 & .071           & .575 & .288           & .000 & \textbf{.500} & .653 & \textbf{.827} \\
+00383291-s & of colour of a blue sapphire (adj)          & .100 & .050           & .588 & .294           & .000 & .000 & .468 & .234 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Several observations are worth noting.
+
+\paragraph{Hypernym signal dominates for well-classified entries.}
+For \texttt{omw-en-15019483-n} (\emph{precious transparent stone of rich
+blue corundum}), the BFS reaches the synset \texttt{omw-en-14662574-n}
+(\emph{mineral}), giving a hypernym score of~1.0.
+For \texttt{omw-en-04969242-n} (\emph{a light shade of blue}), the BFS
+reaches \texttt{omw-en-04959672-n} (\emph{chromatic colour}), again
+scoring~1.0 against the target domain COLOUR.
+
+\paragraph{Embeddings recover definition similarity that overlap misses.}
+Under Jaccard, the metaphorical meaning \textsc{bright colour} scores 0.0
+against \emph{a light shade of blue} because no content words overlap.
+The embedding similarity is 0.653, correctly capturing that the two
+phrases are semantically near-synonymous.
+Without the hypernym signal this sense would still rank first for
+metaphorical matching under embeddings (score 0.827 vs.\ 0.234 for the
+next best), but the hypernym contribution of~0.5 alone is already
+sufficient to select it correctly under Jaccard.
+
+\paragraph{Correct senses are selected.}
+Both methods agree on the correct pair:
+\begin{itemize}
+  \item \textbf{Literal}: \texttt{omw-en-15019483-n}
+    (\emph{a precious transparent stone of rich blue corundum}),
+    hypernym anchor: MINERAL $\to$ \texttt{omw-en-14662574-n}.
+  \item \textbf{Metaphorical}: \texttt{omw-en-04969242-n}
+    (\emph{a light shade of blue}),
+    hypernym anchor: COLOUR $\to$ \texttt{omw-en-04959672-n}.
+\end{itemize}
+
+%% -------------------------------------------------------------------------
+\section{Preliminary Results}
+\label{sec:results}
+
+We ran the full pipeline over all 8,747 thesaurus entries using the
+embedding method ($\alpha = 0.5$, \texttt{embeddinggemma:latest},
+batch size 64).
+Table~\ref{tab:coverage} reports basic coverage statistics.
+
+\begin{table}[ht]
+\centering
+\caption{Coverage of the full thesaurus run.}
+\label{tab:coverage}
+\begin{tabular}{lr}
+\toprule
+Metric & Count \\
+\midrule
+Total entries                  & 8,747 \\
+Distinct headwords             & 6,880 \\
+Entries with $\geq 1$ WN sense & 6,342 \\
+Entries with 0 WN senses       & 2,405 \\
+Unique synset texts embedded   & 31,610 \\
+\midrule
+Source domains (map)           &   213 \\
+\quad of which: grouping nodes &    56 \\
+\quad of which: single synsets &   157 \\
+WN ancestry promotions         &    92 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Of the 2,405 entries with no WordNet senses, most are idioms, fixed
+phrases, or compound expressions whose headwords do not appear as lemmas
+in OMW~2.0.
+Threshold selection for accepting a match as reliable is an open
+question: entries where both $\mathrm{sim}$ and $h$ are low should be
+treated as unmatched.
+We defer systematic evaluation against manually annotated gold data to
+future work.
+
+\subsection{Domain Coverage and Generalisation}
+\label{subsec:domaincoverage}
+
+We assess how well the domain map synsets cover the entries via two
+matching strategies and compare them to the existing lemma-based approach:
+
+\begin{description}
+  \item[lemma] The current pipeline: the domain keyword appears as a
+    lemma in some ancestor of the entry's literal synset.
+  \item[exact] The domain's canonical synset (from the domain map) appears
+    in the ancestor chain of the entry's literal synset.
+  \item[+$k$ levels] The domain synset's ancestor at $k$ steps up the
+    WordNet hierarchy appears in the entry's ancestor chain (i.e.\ we
+    generalise the domain definition by $k$ WordNet levels).
+\end{description}
+
+\noindent
+All percentages are computed over entries that have at least one WN sense.
+Table~\ref{tab:domaincoverage} shows results for selected domains.
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Coverage of selected source domains under different matching
+strategies.  $N$ = entries in the domain's theme(s); no\_wn = fraction
+without any WN sense; lemma, exact, +1, +2 = cumulative additional
+entries matched (as \% of those with WN senses); miss = still unmatched
+after +2 levels.}
+\label{tab:domaincoverage}
+\begin{tabular}{lrrrrrrr}
+\toprule
+Domain & $N$ & no\_wn & lemma & exact & +1 & +2 & miss \\
+\midrule
+\multicolumn{8}{l}{\textit{Well-matched concrete domains}} \\
+\textsc{food}       & 123 & 25\% & 47\% & 45\% &  2\% &  1\% & 42\% \\
+\textsc{body}       & 122 &  8\% & 50\% & 50\% &  0\% & 14\% & 24\% \\
+\textsc{sound}      &  39 & 10\% & 54\% & 51\% &  5\% &  5\% & 31\% \\
+\textsc{plant}      & 110 & 12\% & 48\% & 44\% &  6\% &  4\% & 39\% \\
+\midrule
+\multicolumn{8}{l}{\textit{Motivating example}} \\
+\textsc{mineral}    &  46 & 13\% & 22\% & 20\% & 15\% &  2\% & 62\% \\
+\midrule
+\multicolumn{8}{l}{\textit{Domains gaining most from +1 generalisation}} \\
+\textsc{amphibian}  &  17 & 11\% & 13\% & 13\% & 53\% &  0\% & 33\% \\
+\textsc{waterbird}  &  19 & 15\% & 25\% & 25\% & 37\% &  0\% & 37\% \\
+\textsc{implement}  &  37 & 21\% & 31\% & 27\% & 31\% &  0\% & 41\% \\
+\textsc{contract}   &  17 & 17\% & 35\% & 28\% & 35\% & 0\% & 14\% \\
+\textsc{building}   & 225 & 18\% &  9\% &  8\% & 22\% &  2\% & 62\% \\
+\textsc{material}   &  67 & 32\% & 26\% & 26\% & 22\% &  6\% & 40\% \\
+\midrule
+\multicolumn{8}{l}{\textit{Domains gaining most from +2 generalisation}} \\
+\textsc{fluid}      &  54 & 20\% & 13\% &  9\% & 11\% & 30\% & 41\% \\
+\textsc{position}   &  92 & 23\% & 40\% & 30\% &  5\% & 25\% & 34\% \\
+\textsc{vegetable}  &  22 & 18\% & 16\% &  5\% & 11\% & 27\% & 55\% \\
+\midrule
+\multicolumn{8}{l}{\textit{Abstract domains (hard to match via WordNet hierarchy)}} \\
+\textsc{high}       & 259 & 26\% & 16\% &  7\% &  0\% &  0\% & 92\% \\
+\textsc{distance}   & 195 & 34\% &  5\% &  3\% &  0\% &  0\% & 96\% \\
+\textsc{heat}       & 120 & 35\% & 10\% &  7\% &  0\% &  2\% & 89\% \\
+\midrule
+\textbf{Total}      & 8,723 & 26\% & 24\% & 19\% &  4\% &  3\% & 67\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Several patterns emerge.
+First, \textbf{lemma match and synset-exact are close overall} (24\% vs.\
+19\%), validating the quality of the domain map's canonical synsets: the
+synset-based approach is slightly more conservative but equally targeted.
+
+Second, \textbf{one WordNet level of generalisation materially helps for a
+subset of concrete domains}.
+Notably, \textsc{amphibian} gains 53~percentage points at +1~level:
+the canonical synset is too narrow (it covers only one order of
+amphibians), but the parent synset covers the full class.
+Similarly, \textsc{waterbird}, \textsc{implement}, and \textsc{building}
+all gain more than 20~pp at +1~level.
+This confirms the motivating observation that words like \emph{amber} and
+\emph{gold} fail to match \textsc{mineral}'s canonical synset but succeed
+at +1~level (covering the broader \emph{material} class).
+
+Third, \textbf{abstract source domains remain largely uncovered at any
+level}.
+Domains such as \textsc{high}, \textsc{distance}, \textsc{heat}, and
+\textsc{movement} have miss rates of 63--96\%, because most entries in
+these themes denote abstract properties or manner adverbials that do not
+sit in a WordNet hypernym chain passing through a recognisable domain
+ancestor.
+These represent a structural limit of the hypernym-matching approach and
+point toward the need for distributional or frame-semantic signals for
+such domains.
+
+%% -------------------------------------------------------------------------
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Strengths.}
+The asymmetric use of hypernym chains — source domains for literal senses,
+target domains for metaphorical senses — exploits the linguistic
+structure of conceptual metaphor directly.
+Where a clean hypernym path exists the signal is strong and interpretable,
+and the matched ancestor synset provides a grounded semantic anchor.
+The source domain taxonomy adds a second layer of structure: the 92
+WordNet-inferred parent--child relationships among domains (e.g.\
+\textsc{waterbird} $\to$ \textsc{bird} $\to$ \textsc{n\_top}) make the
+ontology navigable and reusable for downstream tasks.
+
+\paragraph{Domain map calibration.}
+The coverage analysis (Section~\ref{subsec:domaincoverage}) reveals that
+the domain map's canonical synsets are well-calibrated for concrete,
+taxonomically organised domains (animals, body parts, food, plants) but
+too narrow for several others.
+Domains like \textsc{amphibian}, \textsc{waterbird}, and \textsc{implement}
+would benefit from shifting their canonical synset one WordNet level up;
+domains like \textsc{fluid} and \textsc{position} benefit more from
+two levels.
+The \textbf{lemma $\approx$ exact} pattern observed in the majority of
+domains confirms that the lemma-based matching and the synset-based
+approach are largely equivalent in practice, which validates using either
+for downstream applications.
+
+\paragraph{Limitations.}
+\begin{itemize}
+  \item \emph{Abstract source domains.}  Domains such as \textsc{high},
+    \textsc{distance}, and \textsc{heat} have miss rates above 85\% at all
+    levels tested.
+    Their entries denote degree, scale, or property adjectives that do not
+    follow a hypernym path through recognisable domain keywords.
+    Alternative signals (frame-semantic, distributional, or corpus-based)
+    are needed for this class of domain.
+  \item \emph{Multi-synset domains.}  For 56 source domains (e.g.\
+    \textsc{bird}) the canonical representation is split across several
+    synsets, reflecting genuine polysemy or taxonomic ambiguity.
+    The grouping node in the taxonomy has no synset of its own, so it
+    cannot benefit from the WordNet ancestry promotion step.
+  \item \emph{No POS filtering.}  We retrieve all synsets irrespective of
+    part of speech because POS in the thesaurus reflects metaphorical usage.
+    A post-hoc POS compatibility check could penalise implausible matches.
+  \item \emph{Idioms and multi-word expressions.}  The 2,405 entries with
+    no WordNet sense are overwhelmingly idioms, fixed phrases, or compound
+    expressions absent from OMW~2.0.
+  \item \emph{Threshold.}  Without gold-standard annotations the
+    appropriate score threshold for accepting a match is unknown.
+\end{itemize}
+
+\paragraph{Future work.}
+\begin{itemize}
+  \item \emph{Adaptive domain synset generalisation.}
+    Re-run hypernym matching using each domain's canonical synset (or its
+    ancestor at the optimal WordNet level, as identified by the coverage
+    analysis) instead of raw lemma string matching.
+    This would directly address the \textsc{mineral}/\textsc{material}
+    discrepancy observed for entries like \emph{amber} and \emph{gold}.
+  \item \emph{Domain synset calibration.}
+    For domains where +1 or +2 generalisation yields the largest gains
+    (Table~\ref{tab:domaincoverage}), update the canonical synset in the
+    domain map to the more general level and re-run to measure the effect
+    on overall coverage.
+  \item \emph{Abstract domain matching.}
+    Investigate frame-semantic or distributional methods for domains
+    (e.g.\ \textsc{high}, \textsc{distance}) that are not well served by
+    WordNet hypernym chains.
+  \item \emph{Manual evaluation.}
+    Evaluate against a hand-annotated sample of 200--300 entries to
+    establish precision and recall for sense selection.
+  \item \emph{Cross-lingual projection.}
+    Propagate synset links across languages via multilingual wordnets to
+    extend \textsc{MetThes} coverage cross-lingually.
+  \item \emph{Fine-tuned encoders.}
+    Explore encoders trained on definition-similarity tasks to improve
+    the definition similarity signal.
+\end{itemize}
+
+%% -------------------------------------------------------------------------
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have presented a method for automatically linking a large English
+conceptual metaphor thesaurus to WordNet senses using two complementary
+signals: definition similarity (Jaccard or embedding cosine) and hypernym
+chain matching against the source and target domains encoded in each
+theme's name.
+The method correctly separates the literal and metaphorical senses of
+entries such as \emph{sapphire} and produces interpretable, grounded
+annotations for 6,342 of the 8,747 entries (72.5\%).
+As a by-product we build a source domain taxonomy of 213 domains
+organised as a shallow WordNet-anchored hierarchy, with 92 inter-domain
+IS-A relationships inferred automatically from WordNet ancestry.
+
+Coverage analysis shows that the existing lemma-based matching and the
+new synset-based approach agree closely for most domains, but that a
+targeted one-level generalisation of the domain synset could recover
+substantial additional matches for concrete taxonomic domains
+(e.g.\ +53~pp for \textsc{amphibian}, +37~pp for \textsc{waterbird}).
+Abstract source domains remain a harder challenge, motivating future
+work on frame-semantic and distributional methods.
+
+The full pipeline is implemented in Python using the \texttt{wn} library
+and the Ollama local inference server, with persistent embedding caching
+to enable efficient reruns.
+
+\bibliographystyle{plainnat}
+\bibliography{paper}
+
+\end{document}

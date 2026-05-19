@@ -28,21 +28,43 @@ from docx.oxml.ns import qn
 # ---------------------------------------------------------------------------
 
 RELATIONSHIP_SYMBOLS = {"<", ">", "#", ">>", "^", "v", "⇔", "⟺", "||", "↔"}
+
+# Official set from guide section 3, extended with non-standard forms Goatly
+# uses in the thesaurus proper (vt-pp, v-prp, etc.).
 WORD_CLASSES = {
+    # Official (guide section 3)
     "adj", "adjphr", "adv", "advphr", "art", "cl", "excl", "idi",
     "n", "nplur", "nphr", "pr", "pref", "prphr", "pt", "v", "verg",
     "vi", "v-inf", "virec", "vtref", "vt", "prp", "pp",
+    # Non-standard extensions found in the thesaurus source
+    "vt-pp",   # transitive verb, past-participle form
+    "v-prp",   # verb, present-participle form
+    "viprp",   # intransitive verb, present-participle form
+    "vphr",    # verb phrase
+    "conj",    # conjunction
+    "advcl",   # adverbial clause
+    "vt-inf",  # transitive verb in infinitive form
 }
 
-# Regex for a single word-class token, e.g. "n", "idi(vt+adv+adv)", "(n)"
-_WC_ALTS = "|".join(sorted(WORD_CLASSES, key=len, reverse=True))
+# A single WC token, e.g. "n", "idi(vt+adv+adv)", "(n)", "vt-pp"
+_WC_ALTS  = "|".join(sorted(WORD_CLASSES, key=len, reverse=True))
 _WC_TOKEN = r"(?:\(?" + r"(?:" + _WC_ALTS + r")" + r"(?:\([^)]*\))?" + r"\)?)"
-# Full word class: conversion "(n)|vt" or compound "vi+adv" or simple "n"
+
+# A slash-alternative group, e.g. "n/adj" or "adj/v"
+_WC_OPT = r"(?:" + _WC_TOKEN + r"(?:/" + _WC_TOKEN + r")*)"
+
+# A compound (one or more options joined by +), e.g. "vt+pr" or "vi+adv+adv"
+_WC_COMPOUND = r"(?:" + _WC_OPT + r"(?:\+" + _WC_OPT + r")*)"
+
+# Full word class:
+#   conversion  "(n)|vt+pr"  or  "n|n/adj"  — compound on both sides of |
+#   plain compound  "vi+adv"
+#   simple  "n"
 _WC_FULL = (
     r"(?:"
-    r"(?:" + _WC_TOKEN + r"\|" + _WC_TOKEN + r")"   # conversion: (n)|vt
+    r"(?:" + _WC_COMPOUND + r"\|" + _WC_COMPOUND + r")"   # conversion
     r"|"
-    r"(?:" + _WC_TOKEN + r"(?:\+" + _WC_TOKEN + r")*)"  # simple or compound
+    r"(?:" + _WC_COMPOUND + r")"                           # simple / compound
     r")"
 )
 WC_AT_END = re.compile(r"^(.*?)\s*(" + _WC_FULL + r")\s*$", re.DOTALL)
@@ -61,12 +83,91 @@ THEME_FIXUPS = {
     "IS CONTAINER":       "MIND IS CONTAINER",
     "IS BUILDING":        "MIND IS BUILDING",
     "MONEY IS":           "MONEY IS FOOD",
+    # "HIT" was split across a line break in the source docx and lost during
+    # paragraph merging; the guide confirms the full name.
+    # Note: clean_theme_name strips spaces around "/" before this lookup,
+    # so the key must already be normalised.
+    "STEAL IS/CUT/TEAR": "STEAL IS HIT/CUT/TEAR",
 }
+
+
+def _strip_placeholder(lit: str) -> str:
+    """Remove ``__`` placeholder markers and their surrounding parentheses.
+
+    Called only when a ``source_lemma`` has been identified, so the caller
+    guarantees the string contains ``_{2,}``.
+
+    Examples::
+
+        '(___thick skinned reptile…)'  → 'thick skinned reptile…'
+        '(__small river__)'            → 'small river'
+        '(be suspended__)'             → 'be suspended'
+    """
+    s = lit.strip()
+    if s.startswith("(") and s.endswith(")"):
+        s = s[1:-1]
+    s = re.sub(r"^_{2,}\s*", "", s)   # strip leading __
+    s = re.sub(r"\s*_{2,}$", "", s)   # strip trailing __
+    return s.strip()
 
 
 def is_all_caps(text: str) -> bool:
     letters = [c for c in text if c.isalpha()]
     return bool(letters) and all(c.isupper() for c in letters)
+
+
+# Function words that are unlikely to be the metaphor source when they appear
+# as the terminal word of a compound headword.
+_TERMINAL_STOP = frozenset({
+    "a", "an", "the", "of", "in", "at", "to", "for", "with",
+    "by", "from", "as", "into", "onto", "about", "like",
+})
+
+
+def source_lemma(headword: str, literal_meaning: str) -> str:
+    """Identify the WN lookup lemma for a compound-word headword.
+
+    For idioms and compound nouns the literal meaning is defined by just one
+    component (the *source*), marked with ``__`` in the parenthetical gloss.
+    For example:
+
+      'lounge lizard'  (___thick skinned reptile …)  → 'lizard'
+      'heart of gold'  (__the metal Au)               → 'gold'
+      'a stream of'    (__small river__)               → 'stream'
+
+    Rules:
+    * Only applied to multi-word headwords that have a ``__`` placeholder.
+    * Trailing ``__`` inside the parenthetical (``(__…__)``) signals that
+      the source word is *before* the terminal word of the headword
+      (e.g. ``a stream of`` → ``stream``).
+    * Otherwise the source is the last non-function-word of the headword.
+
+    Returns an empty string when the pattern does not apply.
+    """
+    words = headword.split()
+    if len(words) < 2:
+        return ""
+    lit = literal_meaning.strip()
+    if not re.search(r"_{2,}", lit):
+        return ""
+
+    has_trailing = bool(re.search(r"_{2,}\s*\)", lit))
+
+    if has_trailing:
+        # Source is the last content word before the terminal word.
+        candidates = words[:-1]  # exclude the last (terminal function) word
+    else:
+        candidates = words
+
+    for word in reversed(candidates):
+        clean = word.strip("()[]\"'.,/").lower()
+        if clean and clean not in _TERMINAL_STOP and len(clean) > 1:
+            return word.strip("()[]\"'.,")
+
+    # Fallback: second-to-last word for trailing-__ case, else last word.
+    if has_trailing:
+        return words[-2].strip("()[]\"'.,") if len(words) >= 2 else ""
+    return words[-1].strip("()[]\"'.,")  # even if it's a function word
 
 
 def run_is_bold(run) -> bool:
@@ -79,6 +180,22 @@ def run_is_italic(run) -> bool:
 
 def run_is_underline(run) -> bool:
     return bool(run.underline)
+
+
+def run_display_text(run) -> tuple[bool, str]:
+    """Return (is_caps, display_text) for a run.
+
+    Metaphorical meanings are sometimes stored as lowercase text with the
+    Word ``font.all_caps`` property set to True (rendered as all-caps in the
+    printed document but stored in lowercase).  This helper detects that case
+    and returns the uppercase form so the extraction matches the visual intent.
+    """
+    text = run.text
+    font_caps = bool(run.font.all_caps)
+    text_caps = is_all_caps(text)
+    if font_caps and not text_caps:
+        return True, text.upper()
+    return text_caps, text
 
 
 def para_is_centered(para) -> bool:
@@ -218,10 +335,10 @@ def parse_entry(para) -> dict:
 
     segments = []
     for run in para.runs:
-        text = run.text
-        if not text:
+        if not run.text:
             continue
-        segments.append((run_is_bold(run), run_is_italic(run), is_all_caps(text), text))
+        is_caps, display_text = run_display_text(run)
+        segments.append((run_is_bold(run), run_is_italic(run), is_caps, display_text))
 
     if not segments:
         return entry
@@ -266,6 +383,12 @@ def parse_entry(para) -> dict:
 
     entry["literal_meaning"], entry["word_class_literal"], entry["word_class_metaphorical"] = \
         _parse_literal_and_wordclass(plain_text)
+
+    entry["source_lemma"] = source_lemma(
+        entry["headword"], entry["literal_meaning"]
+    )
+    if entry["source_lemma"]:
+        entry["literal_meaning"] = _strip_placeholder(entry["literal_meaning"])
 
     return entry
 
@@ -700,7 +823,8 @@ def summarize(data: dict):
 # ---------------------------------------------------------------------------
 
 def main():
-    docx_path = Path("THE_THESAURUS.docx")
+    repo_root = Path(__file__).parent.parent
+    docx_path = repo_root / "external" / "THE_THESAURUS.docx"
     if not docx_path.exists():
         print("Error: %s not found" % docx_path, file=sys.stderr)
         sys.exit(1)
@@ -717,7 +841,8 @@ def main():
             print("  " + e)
         sys.exit(1)
 
-    out_path = Path("thesaurus.json")
+    out_path = repo_root / "build" / "thesaurus.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     print("\nWrote %s (%d KB)" % (out_path, out_path.stat().st_size // 1024))
